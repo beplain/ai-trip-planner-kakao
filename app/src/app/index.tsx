@@ -139,7 +139,7 @@ function MeTab() {
       <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
         <View style={s.memberBox}>
           <Text style={s.sectionTitleSmall}>{user?.name}</Text>
-          <Text style={s.memberNames}>{user?.email ?? '이메일 정보 없음 (개발용 계정)'}</Text>
+          <Text style={s.memberNames}>{user?.email?.trim() || '등록된 이메일이 없습니다'}</Text>
         </View>
 
         <Text style={s.label}>초대 링크로 참여</Text>
