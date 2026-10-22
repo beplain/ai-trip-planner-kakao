@@ -1,0 +1,8 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/tripplanner?serverTimezone=Asia/Seoul&characterEncoding=UTF-8}
+    username: ${DB_USERNAME:tripplanner}
+    password: ${DB_PASSWORD:tripplanner}
+  jpa:
+    hibernate:
+      ddl-auto: ${DDL_AUTO:update}

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>여행 동행자 초대</title>
+  <style>
+    body{margin:0;background:#f5f7fc;color:#172033;font:16px/1.6 system-ui,sans-serif}
+    main{max-width:460px;margin:40px auto;padding:24px;background:#fff;border-radius:20px}
+    h1{font-size:25px}button,a.button{display:block;box-sizing:border-box;width:100%;padding:15px;margin:12px 0;border:0;border-radius:12px;font-size:16px;font-weight:700;text-align:center;text-decoration:none;cursor:pointer}
+    button{background:#fee500;color:#191919}a.button{background:#4263eb;color:white}input{box-sizing:border-box;width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;font-size:15px}#status{color:#6b7280;white-space:pre-wrap}small{color:#6b7280}
+  </style>
+</head>
+<body><main>
+  <h1>함께 여행을 계획해요</h1>
+  <p id="permission"></p>
+  <section id="sender" hidden>
+    <p>카카오톡에서 받을 친구나 대화방을 선택하고 전송해 주세요.</p>
+    <button id="send" type="button" disabled>카카오톡 준비 중…</button>
+    <p id="status" role="status"></p>
+  </section>
+  <section id="recipient">
+    <a id="open-app" class="button">앱에서 초대 확인</a>
+    <p>Expo Go로 테스트 중이거나 앱이 열리지 않으면, 앱에 로그인한 뒤 <b>마이 → 초대 링크로 참여</b>에 아래 코드를 붙여 넣으세요.</p>
+    <label for="code">초대 코드</label><input id="code" readonly>
+    <button id="copy" type="button">초대 코드 복사</button>
+    <small>초대는 유효기간 안에 사용할 수 있으며, 앱에서 참여를 눌러야 여행에 추가됩니다.</small>
+  </section>
+</main>
+<script>
+const config=__INVITE_CONFIG__;
+document.getElementById('permission').textContent='초대 권한: '+config.role;
+document.getElementById('code').value=config.token;
+document.getElementById('open-app').href=config.deepLink;
+document.getElementById('copy').onclick=async function(){
+  try{await navigator.clipboard.writeText(config.token);this.textContent='복사했어요';}
+  catch(e){const input=document.getElementById('code');input.focus();input.select();this.textContent='코드를 길게 눌러 복사해 주세요';}
+};
+if(config.key){
+  document.getElementById('sender').hidden=false;
+  const button=document.getElementById('send'),status=document.getElementById('status');
+  const sdk=document.createElement('script');
+  sdk.src='https://t1.kakaocdn.net/kakao_js_sdk/2.8.4/kakao.min.js';
+  sdk.integrity='sha384-BGX7Wb16GmRFagri4bLJV2DgipVZaU2AI812GZtHtHzzDQJnfHasDXN5houxv45w';
+  sdk.crossOrigin='anonymous';
+  sdk.onerror=function(){status.textContent='카카오톡 공유를 준비하지 못했어요. 인터넷 연결을 확인하거나 앱의 다른 방법으로 공유를 이용해 주세요.';button.textContent='공유 연결 실패';};
+  sdk.onload=function(){
+    try{
+      Kakao.init(config.key);
+      button.disabled=false;button.textContent='카카오톡으로 초대 보내기';
+      button.onclick=function(){
+        try{
+          Kakao.Share.sendDefault({objectType:'text',text:'여행 일정에 초대합니다! ('+config.role+')\n앱에서 초대를 확인하고 함께 여행을 계획해요.\n\nExpo Go에서는 아래 초대 코드를 앱에 붙여 넣어 주세요.\n'+config.token,
+            link:{webUrl:config.url,mobileWebUrl:config.url},buttonTitle:'초대 확인'});
+          status.textContent='카카오톡에서 받을 상대를 선택하고 전송해 주세요. 열리지 않으면 버튼을 다시 눌러 주세요.';
+        }catch(e){status.textContent='공유를 시작하지 못했어요. 카카오 콘솔의 JavaScript SDK 도메인과 제품 링크에 현재 서버 주소가 등록되어 있는지 확인해 주세요.';}
+      };
+    }catch(e){status.textContent='카카오 JavaScript 키 설정을 확인해 주세요.';button.textContent='공유 설정 확인 필요';}
+  };
+  document.head.appendChild(sdk);
+}
+</script></body></html>

@@ -1,0 +1,49 @@
+# 기본 프로필: local (H2 파일 DB, MySQL 없이 바로 실행 가능)
+# MySQL 사용: SPRING_PROFILES_ACTIVE=mysql
+spring:
+  profiles:
+    default: local
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        default_batch_fetch_size: 100
+  jackson:
+    default-property-inclusion: non_null
+
+server:
+  port: ${PORT:8080}
+  # ngrok 등 프록시 뒤에서 https/호스트를 올바르게 인식 (카카오 Redirect URI 계산용)
+  forward-headers-strategy: framework
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+app:
+  jwt:
+    # 32바이트 이상 임의 문자열. 운영에서는 반드시 환경변수로 교체
+    secret: ${APP_JWT_SECRET:change-me-to-a-long-random-secret-at-least-32-bytes!!}
+    ttl-days: ${APP_JWT_TTL_DAYS:14}
+  kakao:
+    # 카카오 REST API 키 - 서버 전용(로그인 + 장소 검색). 비어 있으면 카카오 로그인/장소 검증 불가
+    rest-api-key: ${KAKAO_REST_API_KEY:}
+    # 카카오 콘솔 [보안]에서 Client Secret을 "사용함"으로 했을 때만 입력
+    client-secret: ${KAKAO_CLIENT_SECRET:}
+    # 로그인 후 돌아갈 앱 주소 허용 목록. exp:// 는 Expo Go 개발용이므로 배포 시 제거
+    allowed-redirects: ${KAKAO_ALLOWED_REDIRECTS:tripplanner://,exp://}
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    model: ${OPENAI_MODEL:gpt-4o-mini}
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+  # 비워 두면 요청 주소(ngrok의 X-Forwarded 헤더 포함)로 자동 계산
+  public-base-url: ${APP_PUBLIC_BASE_URL:}
+  # 개발용 로그인(POST /api/auth/dev). 운영에서는 false
+  dev-login-enabled: ${APP_DEV_LOGIN_ENABLED:true}
+  # 초대 링크에 쓰는 앱 딥링크 스킴 (app.json의 scheme)
+  invite-link-base: ${APP_INVITE_LINK_BASE:tripplanner://invite/}
+  invite-ttl-days: 7

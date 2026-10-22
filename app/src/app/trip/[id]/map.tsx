@@ -1,0 +1,209 @@
+import { useLocalSearchParams } from 'expo-router';
+import * as Location from 'expo-location';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { WebView, type WebViewMessageEvent } from 'react-native-webview';
+
+import { draftsApi } from '../../../../services/drafts';
+import { apiError } from '../../../../services/api';
+import { tripsApi, type Place, type TripDraft } from '../../../../services/trips';
+import { RequireAuth } from '@/components/require-auth';
+import { ScreenHeader } from '@/components/screen-header';
+import { hasCoords } from '@/lib/format';
+import { buildKakaoMapHtml, openDirections, openPlacePage } from '@/lib/kakao-map';
+import { C, DAY_COLORS, s } from '@/lib/styles';
+
+const KAKAO_JS_KEY = process.env.EXPO_PUBLIC_KAKAO_JS_KEY ?? '';
+
+export default function TripMapRoute() {
+  return <RequireAuth><TripMapScreen /></RequireAuth>;
+}
+
+type MapPlace = { key: string; label: string; lat: number; lng: number };
+type MapGroup = { color: string; places: MapPlace[] };
+
+function TripMapScreen() {
+  const { id, draftId } = useLocalSearchParams<{ id: string; draftId?: string }>();
+  const [trip, setTrip] = useState<TripDraft | null>(null);
+  const [dayIdx, setDayIdx] = useState<number | 'all'>('all');
+  const [mapReady, setMapReady] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [position, setPosition] = useState<Location.LocationObject | null>(null);
+  const locationLock = useRef(false);
+  const mounted = useRef(true);
+  const [selected, setSelected] = useState<{ place: Place; dayNumber: number; order: number } | null>(null);
+  const webRef = useRef<WebView>(null);
+  const html = useMemo(() => buildKakaoMapHtml(KAKAO_JS_KEY), []);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  async function locate() {
+    if (locationLock.current || !mapReady || mapError) return;
+    locationLock.current = true;
+    setLocating(true);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      if (!await Location.hasServicesEnabledAsync()) {
+        Alert.alert('위치 서비스를 켜 주세요', '휴대폰 설정에서 위치 서비스를 켠 뒤 다시 눌러 주세요.');
+        return;
+      }
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (!mounted.current) return;
+      if (!permission.granted) {
+        Alert.alert('위치 접근 권한이 필요해요', '내 위치를 표시하려면 위치 접근을 허용해 주세요.', [
+          { text: '취소', style: 'cancel' },
+          ...(!permission.canAskAgain ? [{ text: '설정 열기', onPress: () => { void Linking.openSettings(); } }] : []),
+        ]);
+        return;
+      }
+      const current = await Promise.race([
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('위치 확인 시간이 초과됐어요. 실외나 창가에서 다시 시도해 주세요.')), 20000); }),
+      ]);
+      if (mounted.current) setPosition(current);
+    } catch (e) {
+      if (mounted.current) Alert.alert('위치를 확인하지 못했어요', e instanceof Error ? e.message : '잠시 후 다시 시도해 주세요.');
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      locationLock.current = false;
+      if (mounted.current) setLocating(false);
+    }
+  }
+
+  useEffect(() => {
+    (draftId ? draftsApi.get(draftId).then((room) => room.draft) : tripsApi.get(Number(id))).then(setTrip).catch((e) => Alert.alert('불러오기 실패', apiError(e)));
+  }, [id, draftId]);
+
+  // 지도에 보낼 데이터 + 마커 key → 장소 매핑
+  const { groups, lookup, missing } = useMemo(() => {
+    const lookup = new Map<string, { place: Place; dayNumber: number; order: number }>();
+    const groups: MapGroup[] = [];
+    let missing = 0;
+    trip?.days.forEach((d, i) => {
+      missing += d.places.filter((p) => !hasCoords(p)).length;
+      if (dayIdx !== 'all' && dayIdx !== i) return;
+      const places: MapPlace[] = [];
+      d.places.forEach((p, order) => {
+        if (!hasCoords(p)) return;
+        const key = `${d.dayNumber}-${order}`;
+        lookup.set(key, { place: p, dayNumber: d.dayNumber, order });
+        places.push({ key, label: String(order + 1), lat: p.latitude, lng: p.longitude });
+      });
+      groups.push({ color: DAY_COLORS[i % DAY_COLORS.length], places });
+    });
+    return { groups, lookup, missing };
+  }, [trip, dayIdx]);
+
+  const count = groups.reduce((n, g) => n + g.places.length, 0);
+
+  // 지도 준비 후, 그리고 일차 선택이 바뀔 때마다 마커 다시 그리기
+  useEffect(() => {
+    if (!mapReady) return;
+    webRef.current?.injectJavaScript(`window.renderPlaces(${JSON.stringify(groups)}); true;`);
+  }, [mapReady, groups]);
+
+  useEffect(() => {
+    if (!mapReady || !position) return;
+    const { latitude, longitude, accuracy } = position.coords;
+    webRef.current?.injectJavaScript(`window.showUserLocation(${JSON.stringify({ latitude, longitude, accuracy })}); true;`);
+  }, [mapReady, position]);
+
+  function onMessage(e: WebViewMessageEvent) {
+    let msg: { type: string; key?: string; message?: string };
+    try { msg = JSON.parse(e.nativeEvent.data); } catch { return; }
+    if (msg.type === 'ready') { setSelected(null); setMapReady(true); }
+    else if (msg.type === 'select' && msg.key) setSelected(lookup.get(msg.key) ?? null);
+    else if (msg.type === 'error') {
+      setMapError(msg.message === 'sdk-load'
+        ? '카카오 지도를 불러오지 못했어요. EXPO_PUBLIC_KAKAO_JS_KEY와 카카오 콘솔의 [플랫폼 > Web] 도메인(http://localhost) 등록을 확인해 주세요.'
+        : `지도 오류: ${msg.message}`);
+    }
+  }
+
+  if (!trip) {
+    return <SafeAreaView style={s.safe}><ScreenHeader title="지도" /><View style={s.center}><ActivityIndicator color={C.primary} size="large" /></View></SafeAreaView>;
+  }
+
+  return (
+    <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
+      <ScreenHeader title={trip.title} />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 10, gap: 8 }}>
+        <Pressable onPress={() => { setSelected(null); setDayIdx('all'); }} style={[s.chip, dayIdx === 'all' && s.chipActive]}>
+          <Text style={[s.chipText, dayIdx === 'all' && s.chipTextActive]}>전체</Text>
+        </Pressable>
+        {trip.days.map((d, i) => (
+          <Pressable key={d.id ?? i} onPress={() => { setSelected(null); setDayIdx(i); }} style={[s.chip, dayIdx === i && { borderColor: DAY_COLORS[i % DAY_COLORS.length], borderWidth: 2 }]}>
+            <Text style={[s.chipText, { color: DAY_COLORS[i % DAY_COLORS.length] }]}>DAY {d.dayNumber}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+
+      {!KAKAO_JS_KEY ? (
+        <View style={s.center}>
+          <Text style={s.emptyTitle}>카카오 지도 키가 없어요</Text>
+          <Text style={[s.empty, { textAlign: 'center' }]}>.env.local에 EXPO_PUBLIC_KAKAO_JS_KEY를 넣고 앱을 다시 시작해 주세요.</Text>
+        </View>
+      ) : (
+        <View style={{ flex: 1 }}>
+          <WebView
+            ref={webRef}
+            source={{ html, baseUrl: 'http://localhost' }}
+            originWhitelist={['*']}
+            javaScriptEnabled
+            domStorageEnabled
+            onMessage={onMessage}
+            style={{ flex: 1 }}
+          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="현재 위치 확인"
+            disabled={!mapReady || !!mapError || locating}
+            onPress={() => { void locate(); }}
+            style={[s.smallButton, { position: 'absolute', top: 100, right: 12, minHeight: 44, paddingHorizontal: 16, justifyContent: 'center', backgroundColor: '#fff' }, (!mapReady || !!mapError || locating) && s.disabled]}
+          >
+            <Text style={s.smallButtonText}>{locating ? '위치 확인 중…' : '◎ 내 위치'}</Text>
+          </Pressable>
+          {mapError && (
+            <View style={[s.warnBox, { position: 'absolute', top: 12, left: 12, right: 12, marginTop: 0 }]}>
+              <Text style={s.warnText}>{mapError}</Text>
+            </View>
+          )}
+          {mapReady && count === 0 && !mapError && (
+            <View style={[s.infoBox, { position: 'absolute', top: 12, left: 12, right: 12, marginTop: 0 }]}>
+              <Text style={s.infoText}>좌표가 확인된 장소가 없어 지도에 표시할 수 없어요. 서버의 KAKAO_REST_API_KEY 설정을 확인해 주세요.</Text>
+            </View>
+          )}
+
+          <View style={{ position: 'absolute', left: 12, right: 12, bottom: 12, backgroundColor: 'rgba(255,255,255,0.97)', borderRadius: 14, padding: 12 }}>
+            {position && <Text style={[s.mutedSmall, { marginBottom: 6 }]}>내 위치 · {new Date(position.timestamp).toLocaleTimeString()}{position.coords.accuracy != null ? ` · 정확도 약 ${Math.round(position.coords.accuracy)}m` : ''} · 버튼을 눌러 갱신</Text>}
+            {selected ? (
+              <>
+                <Text style={s.placeTime}>DAY {selected.dayNumber} · 장소 {selected.order + 1}{selected.place.visitTime ? ` · ${selected.place.visitTime}` : ''}</Text>
+                <Text style={[s.placeName, { marginTop: 2 }]} numberOfLines={1}>{selected.place.name}</Text>
+                {!!selected.place.address && <Text style={s.placeAddr} numberOfLines={1}>{selected.place.address}</Text>}
+                <View style={[s.row, { marginTop: 10 }]}>
+                  <Pressable style={[s.smallButton, { flex: 1, alignItems: 'center' }]} onPress={() => { void openDirections(selected.place); }}>
+                    <Text style={s.smallButtonText}>길찾기</Text>
+                  </Pressable>
+                  <Pressable style={[s.smallButton, { flex: 1, alignItems: 'center' }]} onPress={() => openPlacePage(selected.place)}>
+                    <Text style={s.smallButtonText}>카카오맵 상세</Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={s.mutedSmall}>번호 마커를 누르면 장소 정보가 보여요. 점선은 방문 순서를 이은 직선이며 실제 이동 경로가 아닙니다.</Text>
+                {missing > 0 && <Text style={[s.mutedSmall, { color: C.warnText }]}>지도 미확인 장소 {missing}곳은 표시되지 않았어요.</Text>}
+              </>
+            )}
+          </View>
+        </View>
+      )}
+    </SafeAreaView>
+  );
+}

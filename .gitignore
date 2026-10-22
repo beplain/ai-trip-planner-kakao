@@ -1,0 +1,21 @@
+# 설치·빌드·캐시 파일
+node_modules/
+target/
+.expo/
+dist/
+web-build/
+.gradle/
+
+# 개인 환경설정과 비밀값
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# IDE·로그·압축 파일
+.idea/
+.settings/
+.classpath
+.project
+*.log
+*.zip

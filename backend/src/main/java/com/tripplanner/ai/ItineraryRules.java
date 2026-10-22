@@ -1,0 +1,82 @@
+package com.tripplanner.ai;
+
+import com.tripplanner.ai.AiItinerary.*;
+import java.text.Normalizer;
+import java.time.LocalTime;
+import java.util.*;
+
+/** Shared checks before and after place lookup. Tags alone cannot override category/time constraints. */
+public final class ItineraryRules {
+    private ItineraryRules() {}
+    public static final List<String> STYLES = List.of("맛집", "힐링", "자연", "쇼핑", "문화", "액티비티", "카페", "야경");
+    public static String nameKey(String name, String destination) {
+        String key = normalize(name);
+        String area = normalize(destination);
+        if (!area.isEmpty() && key.startsWith(area)) key = key.substring(area.length());
+        return key;
+    }
+    private static String normalize(String text) {
+        return text == null ? "" : Normalizer.normalize(text, Normalizer.Form.NFKC).toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]", "");
+    }
+    public static Set<String> stylesFor(AiPlace place) {
+        Set<String> result = new HashSet<>();
+        for (String style : place.matchedStyles() == null ? List.<String>of() : place.matchedStyles()) {
+            boolean valid = switch (style) {
+                case "맛집" -> "식당".equals(place.category());
+                case "쇼핑" -> "쇼핑".equals(place.category());
+                case "자연" -> "자연".equals(place.category());
+                case "문화" -> "문화".equals(place.category());
+                case "액티비티" -> "체험".equals(place.category());
+                case "카페" -> "카페".equals(place.category());
+                case "힐링" -> Set.of("자연", "카페", "관광").contains(Objects.toString(place.category(), ""));
+                case "야경" -> !"식당".equals(place.category()) && time(place.visitTime()) >= 18 * 60;
+                default -> false;
+            };
+            if (valid) result.add(style);
+        }
+        return result;
+    }
+    public static List<String> validate(AiItinerary itinerary, ItineraryRequest request) {
+        List<String> errors = new ArrayList<>();
+        if (request.days() < 1 || request.days() > 7) errors.add("여행 기간은 1~7일이어야 함");
+        Set<String> requested = new LinkedHashSet<>(request.styles() == null ? List.of() : request.styles());
+        if (!STYLES.containsAll(requested)) errors.add("지원하지 않는 여행 스타일");
+        if (itinerary == null || itinerary.days() == null) return List.of("days 없음");
+        if (itinerary.days().size() != request.days()) errors.add("일차 수는 정확히 " + request.days() + "일이어야 함");
+        Set<Integer> dayNumbers = new HashSet<>();
+        Set<String> names = new HashSet<>();
+        for (AiDay day : itinerary.days()) {
+            if (day == null) { errors.add("빈 일차"); continue; }
+            int n = day.dayNumber();
+            if (n < 1 || n > request.days() || !dayNumbers.add(n)) errors.add("일차 번호 중복/범위 오류: " + n);
+            if (day.places() == null || day.places().size() < 2 || day.places().size() > 10) {
+                errors.add(n + "일차 장소 수는 2~10개여야 함");
+                if (day.places() == null) continue;
+            }
+            Set<String> covered = new HashSet<>();
+            int previous = -1;
+            for (AiPlace p : day.places()) {
+                if (p == null || p.name() == null || p.name().isBlank()) { errors.add(n + "일차 장소 이름 없음"); continue; }
+                if (!names.add(nameKey(p.name(), request.destination()))) errors.add("전체 여행 중 장소 중복: " + p.name());
+                int visit = time(p.visitTime());
+                if (visit < 0 || visit <= previous) errors.add(n + "일차 방문 시간 형식/순서 오류: " + p.name());
+                previous = visit;
+                Set<String> matching = stylesFor(p);
+                covered.addAll(matching);
+                if (!requested.isEmpty() && !"식당".equals(p.category()) && Collections.disjoint(matching, requested))
+                    errors.add(n + "일차 선택 스타일과 무관한 활동: " + p.name());
+            }
+            Set<String> missing = new LinkedHashSet<>(requested); missing.removeAll(covered);
+            if (!missing.isEmpty()) errors.add(n + "일차에 빠진 스타일: " + String.join(", ", missing));
+        }
+        return errors.stream().limit(20).toList();
+    }
+    private static int time(String value) {
+        if (value == null || !value.matches("\\d{2}:\\d{2}")) return -1;
+        try { var t = LocalTime.parse(value); return t.getHour() * 60 + t.getMinute(); }
+        catch (Exception e) { return -1; }
+    }
+    public static AiPlace atTime(AiPlace place, String time) {
+        return new AiPlace(place.name(), place.searchQuery(), time, place.category(), place.reason(), place.note(), place.matchedStyles());
+    }
+}
