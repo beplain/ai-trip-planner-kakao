@@ -209,7 +209,7 @@ function TripDetailScreen() {
           <Text style={s.sectionTitleSmall}>함께 가는 동행자 ({companions.length})</Text>
           {companions.length === 0 && <Text style={s.mutedSmall}>아직 참여한 동행자가 없어요.</Text>}
           {companions.map((m) => (
-            <Text key={m.userId} style={s.memberNames}>{m.name} · {ROLE_LABEL[m.role]}</Text>
+            <Text key={m.userId} style={s.memberNames}>{m.name} ({ROLE_LABEL[m.role]})</Text>
           ))}
         </View>
 
