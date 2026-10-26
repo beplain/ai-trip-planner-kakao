@@ -1,3 +1,4 @@
+import type { ComponentRef } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,7 +11,7 @@ const ROW = 44;
 function Wheel({ values, value, unit, onChange }: {
   values: number[]; value: number; unit: string; onChange: (value: number) => void;
 }) {
-  const ref = useRef<ScrollView>(null);
+  const ref = useRef<ComponentRef<typeof ScrollView>>(null);
   const moving = useRef(false);
   const index = Math.max(0, values.indexOf(value));
   useEffect(() => {

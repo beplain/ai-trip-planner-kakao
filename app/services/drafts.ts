@@ -10,6 +10,10 @@ export const draftsApi = {
   async create(draft: TripDraft) { return (await api.post<DraftRoom>('/api/drafts', draft)).data; },
   async list() { return (await api.get<DraftRoom[]>('/api/drafts')).data; },
   async get(id: string) { return (await api.get<DraftRoom>(room(id))).data; },
+  async delete(id: string, version: number) { await api.delete(room(id), { params: { version } }); },
+  async rename(id: string, title: string, version: number) {
+    return (await api.put<DraftRoom>(`${room(id)}/title`, { title, version })).data;
+  },
   async update(id: string, draft: TripDraft, version: number) { return (await api.put<DraftRoom>(room(id), { draft, version })).data; },
   async regenerate(id: string, input: GenerateInput, title: string, version: number) {
     return (await api.post<DraftRoom>(`${room(id)}/regenerate`, { input, title, version }, { timeout: 300000 })).data;

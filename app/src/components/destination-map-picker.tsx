@@ -22,7 +22,7 @@ function PickerContent({ initialDestination, onSelect, onClose }: {
   const [position, setPosition] = useState<Location.LocationObject | null>(null);
   const locationLock = useRef(false);
   const mounted = useRef(true);
-  const web = useRef<WebView>(null);
+  const web = useRef<WebView<Record<never, never>>>(null);
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
   const html = useMemo(() => buildDestinationMapHtml(JS_KEY), []);
 
@@ -114,7 +114,7 @@ function PickerContent({ initialDestination, onSelect, onClose }: {
             <Pressable accessibilityRole="button" disabled={!ready || fatal || !query.trim()} onPress={search} style={[s.smallButton, { justifyContent: 'center', paddingHorizontal: 16 }, (!ready || fatal) && s.disabled]}><Text style={s.smallButtonText}>검색</Text></Pressable>
           </View>
           <View style={{ flex: 1 }}>
-            <WebView ref={web} source={{ html, baseUrl: 'http://localhost' }} originWhitelist={['*']} javaScriptEnabled domStorageEnabled onMessage={onMessage}
+            <WebView<Record<never, never>> ref={web} source={{ html, baseUrl: 'http://localhost' }} originWhitelist={['*']} javaScriptEnabled domStorageEnabled onMessage={onMessage}
               onError={() => { setFatal(true); setError('지도를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.'); }} style={{ flex: 1 }} />
             {!ready && !fatal && <View pointerEvents="none" style={{ position: 'absolute', top: 24, alignSelf: 'center' }}><ActivityIndicator color={C.primary} /><Text style={s.mutedSmall}>지도 불러오는 중…</Text></View>}
             <Pressable accessibilityRole="button" accessibilityLabel="GPS로 현재 위치 표시" disabled={!ready || fatal || locating}

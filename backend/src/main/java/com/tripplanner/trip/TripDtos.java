@@ -69,6 +69,8 @@ public final class TripDtos {
     public record RegenerateDraftRequest(@NotNull Long version, @NotBlank @Size(max = 100) String title,
                                          @NotNull @Valid GenerateRequest input) {}
 
+    public record RenameDraftRequest(@NotNull Long version, @NotBlank @Size(max = 100) String title) {}
+
     /** PUT /api/trips/{id} */
     public record UpdateTripRequest(
             @NotBlank @Size(max = 100) String title,

@@ -48,6 +48,8 @@ class DraftRegenerationTests {
     @Autowired UserRepository users;
     @Autowired TripRepository trips;
     @Autowired FakeGenerator generator;
+    @Autowired DraftDocumentRepository documents;
+    @Autowired DraftInvitationRepository draftInvites;
     Long owner; Long viewer; DraftRooms.RoomResponse room;
     @BeforeEach void setup() {
         owner = users.saveAndFlush(new User("dev:regen-" + UUID.randomUUID(), null, "만든 사람")).getId();
@@ -107,5 +109,78 @@ class DraftRegenerationTests {
     @Test void regularDraftUpdateCannotBypassRegenerationForTravelConditions() {
         assertThrows(ApiException.class, () -> drafts.update(room.id(), new DraftRooms.Update(room.version(), generator.result), owner));
         assertEquals(room.draft(), drafts.get(room.id(), owner).draft());
+    }
+    @Test void renameChangesOnlyTitleWithoutGeneratingAndPersistsForCompanions() {
+        var token = drafts.invite(room.id(), MemberRole.EDITOR, owner).token();
+        drafts.join(token, viewer);
+        var before = drafts.get(room.id(), viewer);
+        var result = drafts.rename(room.id(), new RenameDraftRequest(before.version(), "  친구들과 부산 여행  "), viewer);
+        var d = before.draft();
+        assertEquals(new TripDraft("친구들과 부산 여행", d.destination(), d.startDate(), d.endDate(),
+                d.budget(), d.styles(), d.days(), d.source(), d.warnings(), d.request()), result.draft());
+        assertEquals(before.members(), result.members());
+        assertTrue(result.version() > before.version());
+        assertEquals(result.draft(), drafts.get(room.id(), owner).draft());
+        assertEquals(room.id(), drafts.preview(token, owner).draftId());
+        assertEquals(0, generator.calls);
+    }
+    @Test void staleRenameDoesNotOverwriteConcurrentChanges() {
+        var changed = drafts.replaceGenerated(room.id(), room.version(), generator.result, owner);
+        assertThrows(ApiException.class, () -> drafts.rename(room.id(), new RenameDraftRequest(room.version(), "오래된 수정"), owner));
+        assertEquals(changed.draft(), drafts.get(room.id(), owner).draft());
+        assertEquals(0, generator.calls);
+    }
+    @Test void viewerAndFinalizedDraftCannotBeRenamed() {
+        drafts.join(drafts.invite(room.id(), MemberRole.VIEWER, owner).token(), viewer);
+        var current = drafts.get(room.id(), owner);
+        assertThrows(ApiException.class, () -> drafts.rename(room.id(), new RenameDraftRequest(current.version(), "변경"), viewer));
+        drafts.save(room.id(), current.version(), owner);
+        assertThrows(ApiException.class, () -> drafts.rename(room.id(), new RenameDraftRequest(current.version(), "변경"), owner));
+        assertEquals(0, generator.calls);
+    }
+    @Test void ownerDeletesDraftAndAllItsInvitationsButKeepsOtherDrafts() {
+        String token = drafts.invite(room.id(), MemberRole.EDITOR, owner).token();
+        String secondToken = drafts.invite(room.id(), MemberRole.VIEWER, owner).token();
+        drafts.join(token, viewer);
+        var other = drafts.create(itinerary("서울", "별도 장소", null), owner);
+        String otherToken = drafts.invite(other.id(), MemberRole.EDITOR, owner).token();
+        var current = drafts.get(room.id(), owner);
+        long tripCount = trips.count();
+        drafts.delete(room.id(), current.version(), owner);
+        assertFalse(documents.existsById(room.id()));
+        assertFalse(draftInvites.existsById(token));
+        assertFalse(draftInvites.existsById(secondToken));
+        assertTrue(documents.existsById(other.id()));
+        assertTrue(draftInvites.existsById(otherToken));
+        assertThrows(ApiException.class, () -> drafts.get(room.id(), viewer));
+        assertThrows(ApiException.class, () -> drafts.join(token, viewer));
+        assertTrue(drafts.list(owner).stream().noneMatch(d -> d.id().equals(room.id())));
+        assertTrue(drafts.list(viewer).stream().noneMatch(d -> d.id().equals(room.id())));
+        assertEquals(tripCount, trips.count());
+    }
+    @Test void companionsAndOutsidersCannotDeleteDraft() {
+        assertThrows(ApiException.class, () -> drafts.delete(room.id(), room.version(), viewer));
+        for (MemberRole role : List.of(MemberRole.EDITOR, MemberRole.VIEWER)) {
+            Long person = users.saveAndFlush(new User("dev:delete-" + UUID.randomUUID(), null, "동행자")).getId();
+            String token = drafts.invite(room.id(), role, owner).token();
+            drafts.join(token, person);
+            var current = drafts.get(room.id(), owner);
+            assertThrows(ApiException.class, () -> drafts.delete(room.id(), current.version(), person));
+            assertTrue(draftInvites.existsById(token));
+        }
+        assertTrue(documents.existsById(room.id()));
+    }
+    @Test void staleVersionOrFinalizedDraftCannotBeDeleted() {
+        String token = drafts.invite(room.id(), MemberRole.VIEWER, owner).token();
+        var renamed = drafts.rename(room.id(), new RenameDraftRequest(room.version(), "새 이름"), owner);
+        assertThrows(ApiException.class, () -> drafts.delete(room.id(), room.version(), owner));
+        assertTrue(documents.existsById(room.id()));
+        assertTrue(draftInvites.existsById(token));
+        var saved = drafts.save(room.id(), renamed.version(), owner);
+        var finalized = drafts.get(room.id(), owner);
+        assertThrows(ApiException.class, () -> drafts.delete(room.id(), finalized.version(), owner));
+        assertTrue(documents.existsById(room.id()));
+        assertTrue(draftInvites.existsById(token));
+        assertTrue(trips.existsById(saved.id()));
     }
 }

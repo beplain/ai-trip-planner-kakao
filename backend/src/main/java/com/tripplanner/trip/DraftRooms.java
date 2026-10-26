@@ -55,6 +55,22 @@ public class DraftRooms {
             throw ApiException.badRequest("여행 정보는 '여행 정보 수정 · AI 다시 생성'에서 변경해 주세요.");
         r.edit(encode(update.draft())); rooms.flush(); return response(r, user);
     }
+    public RoomResponse rename(String id, RenameDraftRequest request, Long user) {
+        var r = room(id, true); requireEditor(r, user); check(r, request.version());
+        var before = content(r);
+        var renamed = new TripDraft(request.title().trim(), before.destination(), before.startDate(), before.endDate(),
+                before.budget(), before.styles(), before.days(), before.source(), before.warnings(), before.request());
+        r.edit(encode(renamed)); rooms.flush(); return response(r, user);
+    }
+    public void delete(String id, Long version, Long user) {
+        var r = room(id, true); requireMember(r, user);
+        if (!r.getOwnerId().equals(user)) throw ApiException.forbidden("초안 삭제는 여행을 만든 사람만 할 수 있습니다.");
+        check(r, version);
+        invitations.deleteByDocument_Id(id);
+        invitations.flush();
+        rooms.delete(r);
+        rooms.flush();
+    }
     @Transactional(readOnly = true)
     public void checkRegeneration(String id, Long version, Long user) {
         var r = room(id, false); requireEditor(r, user); check(r, version);

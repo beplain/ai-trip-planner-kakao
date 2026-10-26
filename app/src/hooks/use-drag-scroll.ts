@@ -1,9 +1,10 @@
+import type { ComponentRef } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 
 /** One scroll owner for all the day's reorder lists, with edge scrolling during a drag. */
 export function useDragScroll() {
-  const ref = useRef<ScrollView>(null);
+  const ref = useRef<ComponentRef<typeof ScrollView>>(null);
   const offset = useRef(0);
   const contentHeight = useRef(0);
   const viewport = useRef({ top: 0, height: 0 });
@@ -38,7 +39,7 @@ export function useDragScroll() {
     return () => { clearInterval(timer); draggingRef.current = false; frame.current = null; };
   }, []);
   const onContentSizeChange = useCallback((_width: number, height: number) => { contentHeight.current = height; }, []);
-  const attach = useCallback((node: ScrollView | null) => { ref.current = node; }, []);
+  const attach = useCallback((node: ComponentRef<typeof ScrollView> | null) => { ref.current = node; }, []);
   const getOffset = useCallback(() => offset.current, []);
   const isDragging = useCallback(() => draggingRef.current, []);
   const controller = useMemo(() => ({ getOffset, isDragging, begin, end, move }), [getOffset, isDragging, begin, end, move]);

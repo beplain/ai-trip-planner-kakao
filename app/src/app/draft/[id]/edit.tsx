@@ -29,6 +29,16 @@ function EditDraftScreen() {
   const [styles, setStyles] = useState<string[]>([]);
   const [request, setRequest] = useState('');
   const [busy, setBusy] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const original = room?.draft;
+  const conditionsChanged = !!original && (
+    destination.trim() !== original.destination.trim()
+    || startDate !== (original.startDate ?? '')
+    || endDate !== (original.endDate ?? tripEndDate(original.startDate ?? '', original.days.length))
+    || formatBudget(budget) !== formatBudget(original.budget)
+    || JSON.stringify([...styles].sort()) !== JSON.stringify([...(original.styles ?? [])].sort())
+    || request.trim() !== (original.request ?? '').trim()
+  );
 
   useEffect(() => {
     let active = true;
@@ -45,6 +55,12 @@ function EditDraftScreen() {
 
   function save() {
     if (!room || lock.current) return;
+    if (!title.trim()) return Alert.alert('여행 이름을 입력해 주세요');
+    if (!conditionsChanged) {
+      if (title.trim() === room.draft.title.trim()) { router.back(); return; }
+      void rename();
+      return;
+    }
     const days = tripDayCount(startDate, endDate);
     if (!title.trim() || !destination.trim()) return Alert.alert('이름과 목적지를 입력해 주세요');
     if (destination.trim().length > 50) return Alert.alert('목적지는 50자 이내로 입력해 주세요');
@@ -53,6 +69,18 @@ function EditDraftScreen() {
       { text: '취소', style: 'cancel' },
       { text: '새 초안 만들기', onPress: () => { void regenerate(); } },
     ]);
+  }
+
+  async function rename() {
+    if (!room || lock.current) return;
+    lock.current = true; setRenaming(true); setBusy(true);
+    try {
+      await draftsApi.rename(id, title.trim(), room.version);
+      router.back();
+    } catch (e) {
+      Alert.alert(isConflict(e) ? '초안이 변경되었어요' : '이름을 저장하지 못했어요', apiError(e));
+      if (isConflict(e)) router.back();
+    } finally { lock.current = false; setBusy(false); setRenaming(false); }
   }
 
   async function regenerate() {
@@ -72,8 +100,8 @@ function EditDraftScreen() {
   }
 
   if (busy) return <SafeAreaView style={s.safe}>
-    <ScreenHeader title="초안 다시 만드는 중" back={false} />
-    <View style={s.center}><ActivityIndicator color={C.primary} size="large" /><Text style={[s.sectionTitle, { marginTop: 18 }]}>수정한 조건으로 새 일정을 만들고 있어요</Text><Text style={[s.subtitle, { textAlign: 'center' }]}>완료되면 새 초안으로 교체합니다. 생성에 실패하면 기존 초안이 유지됩니다.</Text></View>
+    <ScreenHeader title={renaming ? '여행 이름 저장 중' : '초안 다시 만드는 중'} back={false} />
+    <View style={s.center}><ActivityIndicator color={C.primary} size="large" /><Text style={[s.sectionTitle, { marginTop: 18 }]}>{renaming ? '여행 이름을 저장하고 있어요' : '수정한 조건으로 새 일정을 만들고 있어요'}</Text>{!renaming && <Text style={[s.subtitle, { textAlign: 'center' }]}>완료되면 새 초안으로 교체합니다. 생성에 실패하면 기존 초안이 유지됩니다.</Text>}</View>
   </SafeAreaView>;
 
   if (!room) {
@@ -103,10 +131,10 @@ function EditDraftScreen() {
         <Text style={s.label}>추가 요청</Text>
         <TextInput value={request} onChangeText={setRequest} style={[s.input, s.inputMulti]} multiline maxLength={200} placeholder="예: 매일 쇼핑 위주로, 많이 걷지 않게" />
         <View style={s.infoBox}>
-          <Text style={s.infoText}>여행 정보를 변경하면 모든 날짜의 장소·순서·시간·메모를 새로 생성합니다. 기존 초안을 수정하는 대신 새로운 추천 결과로 교체해요.</Text>
+          <Text style={s.infoText}>여행 이름만 변경하면 기존 일정은 유지됩니다. 목적지·기간·예산·스타일·추가 요청을 변경하면 모든 날짜의 장소·순서·시간·메모를 새로 생성합니다.</Text>
         </View>
         <Pressable disabled={busy} style={[s.primary, busy && s.disabled]} onPress={save}>
-          <Text style={s.primaryText}>{busy ? '생성 중…' : '수정 내용 저장'}</Text>
+          <Text style={s.primaryText}>{conditionsChanged ? '수정 내용 저장' : '여행 이름 저장'}</Text>
         </Pressable>
       </ScrollView>
     </SafeAreaView>

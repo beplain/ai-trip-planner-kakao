@@ -83,6 +83,26 @@ function DraftScreen() {
     } finally { lock.current = false; setBusy(false); }
   }
 
+  function deleteDraft() {
+    const snapshot = current.current;
+    if (!snapshot || snapshot.myRole !== 'OWNER' || lock.current || syncingRef.current || dragScroll.isDragging() || memoOpen.current) return;
+    Alert.alert('초안 삭제', '이 초안을 삭제할까요? 동행자의 목록에서도 사라지고 초대 링크도 사용할 수 없게 됩니다.', [
+      { text: '취소', style: 'cancel' },
+      { text: '삭제', style: 'destructive', onPress: () => { void removeDraft(snapshot); } },
+    ]);
+  }
+  async function removeDraft(snapshot: DraftRoom) {
+    if (lock.current || syncingRef.current || dragScroll.isDragging() || memoOpen.current) return;
+    lock.current = true; setBusy(true);
+    try {
+      await draftsApi.delete(id, snapshot.version);
+      router.replace('/');
+    } catch (e) {
+      Alert.alert('초안 삭제 실패', apiError(e));
+      if (isConflict(e)) try { apply(await draftsApi.get(id)); } catch (loadError) { setError(apiError(loadError)); }
+    } finally { lock.current = false; setBusy(false); }
+  }
+
   function updatePlaces(day: number, transform: (places: Place[]) => Place[], version?: number) {
     void change((d) => ({ ...d, days: d.days.map((entry, index) => index === day ? { ...entry, places: transform(entry.places) } : entry) }), version);
   }
@@ -135,6 +155,9 @@ function DraftScreen() {
               onEditMemo={(_p, i) => { memoOpen.current = true; setMemo({ day: dayIdx, index: i, version: room!.version }); }} />
           </View>)}
           {room?.myRole !== 'VIEWER' && <><TalkCalendarConnection /><Pressable accessibilityRole="button" disabled={busy || syncing || dragging} style={[s.primary, (busy || syncing || dragging) && s.disabled]} onPress={() => { void save(); }}><Text style={s.primaryText}>{busy ? '반영 중…' : '이 일정 확정하기'}</Text></Pressable></>}
+          {room?.myRole === 'OWNER' && <Pressable accessibilityRole="button" disabled={busy || syncing || dragging || !!memo} style={[s.outlineButton, (busy || syncing || dragging || !!memo) && s.disabled]} onPress={deleteDraft}>
+            <Text style={[s.outlineText, { color: C.danger }]}>초안 삭제</Text>
+          </Pressable>}
         </ScrollView>
       )}
       <MemoModal visible={!!memoPlace} title={memoPlace?.name ?? ''} initialTime={memoPlace?.visitTime} initialNote={memoPlace?.note}

@@ -1,3 +1,4 @@
+import type { ComponentRef } from 'react';
 import { useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -13,7 +14,7 @@ const ROW_HEIGHT = 44;
 function MonthWheel({ values, value, suffix, onChange }: {
   values: number[]; value: number; suffix: string; onChange: (value: number) => void;
 }) {
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
   const [initialIndex] = useState(() => Math.max(0, values.indexOf(value)));
   function select(index: number) {
     const bounded = Math.max(0, Math.min(values.length - 1, index));

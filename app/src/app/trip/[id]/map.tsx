@@ -34,7 +34,7 @@ function TripMapScreen() {
   const locationLock = useRef(false);
   const mounted = useRef(true);
   const [selected, setSelected] = useState<{ place: Place; dayNumber: number; order: number } | null>(null);
-  const webRef = useRef<WebView>(null);
+  const webRef = useRef<WebView<Record<never, never>>>(null);
   const html = useMemo(() => buildKakaoMapHtml(KAKAO_JS_KEY), []);
 
   useEffect(() => {
@@ -150,7 +150,7 @@ function TripMapScreen() {
         </View>
       ) : (
         <View style={{ flex: 1 }}>
-          <WebView
+          <WebView<Record<never, never>>
             ref={webRef}
             source={{ html, baseUrl: 'http://localhost' }}
             originWhitelist={['*']}

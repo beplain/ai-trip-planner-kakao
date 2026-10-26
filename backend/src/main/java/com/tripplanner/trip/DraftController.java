@@ -26,6 +26,15 @@ public class DraftController {
     }
     @GetMapping public List<DraftRooms.RoomResponse> list(@AuthenticationPrincipal Jwt jwt) { return drafts.list(CurrentUser.id(jwt)); }
     @GetMapping("/{id}") public DraftRooms.RoomResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable String id) { return drafts.get(id, CurrentUser.id(jwt)); }
+    @DeleteMapping("/{id}")
+    @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
+    public void delete(@AuthenticationPrincipal Jwt jwt, @PathVariable String id, @RequestParam Long version) {
+        drafts.delete(id, version, CurrentUser.id(jwt));
+    }
+    @PutMapping("/{id}/title") public DraftRooms.RoomResponse rename(@AuthenticationPrincipal Jwt jwt, @PathVariable String id,
+            @Valid @RequestBody TripDtos.RenameDraftRequest request) {
+        return drafts.rename(id, request, CurrentUser.id(jwt));
+    }
     @PutMapping("/{id}") public DraftRooms.RoomResponse update(@AuthenticationPrincipal Jwt jwt, @PathVariable String id, @Valid @RequestBody DraftRooms.Update update) {
         return drafts.update(id, update, CurrentUser.id(jwt));
     }
