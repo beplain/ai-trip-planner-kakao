@@ -33,6 +33,7 @@ public class DraftRooms {
         this.users = users; this.trips = trips; this.rooms = rooms; this.invitations = invitations; this.json = json;
     }
     public RoomResponse create(TripDraft draft, Long user) {
+        TravelSchedule.validateDraft(draft);
         if (rooms.countByOwnerIdAndSavedTripIdIsNull(user) >= 50) throw ApiException.badRequest("편집 중인 초안은 최대 50개까지 만들 수 있습니다.");
         var r = rooms.saveAndFlush(new DraftDocument(user, encode(draft), encode(List.of(member(user, MemberRole.OWNER)))));
         return response(r, user);
@@ -51,15 +52,16 @@ public class DraftRooms {
         if (!Objects.equals(before.title(), after.title()) || !Objects.equals(before.destination(), after.destination())
                 || !Objects.equals(before.startDate(), after.startDate()) || !Objects.equals(before.endDate(), after.endDate())
                 || !Objects.equals(before.budget(), after.budget()) || !Objects.equals(before.styles(), after.styles())
-                || !Objects.equals(before.request(), after.request()))
-            throw ApiException.badRequest("여행 정보는 '여행 정보 수정 · AI 다시 생성'에서 변경해 주세요.");
+                || !Objects.equals(before.request(), after.request()) || !Objects.equals(before.travelDetails(), after.travelDetails()))
+            throw ApiException.badRequest("여행 정보는 '여행 정보 수정'에서 변경해 주세요.");
+        TravelSchedule.validateDraft(after);
         r.edit(encode(update.draft())); rooms.flush(); return response(r, user);
     }
     public RoomResponse rename(String id, RenameDraftRequest request, Long user) {
         var r = room(id, true); requireEditor(r, user); check(r, request.version());
         var before = content(r);
         var renamed = new TripDraft(request.title().trim(), before.destination(), before.startDate(), before.endDate(),
-                before.budget(), before.styles(), before.days(), before.source(), before.warnings(), before.request());
+                before.budget(), before.styles(), before.days(), before.source(), before.warnings(), before.request(), before.travelDetails());
         r.edit(encode(renamed)); rooms.flush(); return response(r, user);
     }
     public void delete(String id, Long version, Long user) {
@@ -77,6 +79,7 @@ public class DraftRooms {
     }
     public RoomResponse replaceGenerated(String id, Long version, TripDraft generated, Long user) {
         var r = room(id, true); requireEditor(r, user); check(r, version);
+        TravelSchedule.validateDraft(generated);
         r.edit(encode(generated)); rooms.flush(); return response(r, user);
     }
     public TripResponse save(String id, Long version, Long user) {
@@ -156,7 +159,7 @@ public class DraftRooms {
         return new TripDraft(t.title(), t.destination(), t.startDate(), t.endDate(), t.budget(), t.styles(),
                 t.days().stream().map(d -> new DayDraft(d.dayNumber(), d.date(), d.places().stream().map(p ->
                         new PlaceDraft(p.placeId(), p.name(), p.address(), p.latitude(), p.longitude(), p.visitTime(), p.reason(),
-                                p.note(), p.category(), p.verified(), p.placeUrl(), p.phone())).toList())).toList(), null, List.of());
+                                p.note(), p.category(), p.verified(), p.placeUrl(), p.phone(), p.fixedEventId())).toList())).toList(), null, List.of(), null, t.travelDetails());
     }
     private TripDraft content(DraftDocument r) { return decode(r.getContent(), new TypeReference<TripDraft>() {}); }
     private List<MemberResponse> participants(DraftDocument r) { return decode(r.getParticipants(), new TypeReference<List<MemberResponse>>() {}); }

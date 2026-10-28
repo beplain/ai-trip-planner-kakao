@@ -10,7 +10,7 @@ final class TripMapper {
     static PlaceResponse place(ItineraryPlace p) {
         return new PlaceResponse(p.getId(), p.getPlaceId(), p.getName(), p.getAddress(), p.getLatitude(),
                 p.getLongitude(), p.getVisitTime(), p.getReason(), p.getNote(), p.getCategory(), p.isVerified(),
-                p.getPlaceUrl(), p.getPhone(), p.getOrderIndex());
+                p.getPlaceUrl(), p.getPhone(), p.getOrderIndex(), p.getFixedEventId());
     }
 
     static TripResponse trip(Trip t, MemberRole myRole) {
@@ -26,7 +26,7 @@ final class TripMapper {
                 .toList();
         return new TripResponse(t.getId(), t.getTitle(), t.getDestination(), t.getStartDate(), t.getEndDate(),
                 t.getDays().size(), t.getBudget(), List.copyOf(t.getStyles()), t.getVersion(), t.getUpdatedAt(),
-                myRole, days, members, null);
+                myRole, days, members, null, t.getTravelDetails());
     }
 
     static TripSummary summary(Trip t, MemberRole myRole) {

@@ -7,6 +7,7 @@ import { apiError, isConflict } from '../../../../services/api';
 import { tripsApi, type Place, type Trip } from '../../../../services/trips';
 import { MemoModal } from '@/components/memo-modal';
 import { DraggablePlaces } from '@/components/draggable-places';
+import { TravelDetailsSummary } from '@/components/travel-details-input';
 import { TripActions } from '@/components/trip-actions';
 import { useDragScroll } from '@/hooks/use-drag-scroll';
 import { reorderItems } from '@/lib/reorder';
@@ -180,6 +181,7 @@ function TripDetailScreen() {
         )}
 
         <TalkCalendarPanel tripId={trip.id} version={trip.version} />
+        <TravelDetailsSummary value={trip.travelDetails} />
         <TripActions disabled={busy || refreshing || dragging}
           onMap={() => router.push(`/trip/${trip.id}/map`)}
           onShare={() => { void Share.share({ message: shareText(trip) }).catch(() => undefined); }}

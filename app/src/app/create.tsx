@@ -4,6 +4,8 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View 
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { apiError } from '../../services/api';
+import type { TravelDetails } from '../../services/trips';
+import { TravelDetailsInput, DEFAULT_TRAVEL_DETAILS, travelDetailsError } from '@/components/travel-details-input';
 import { tripsApi } from '../../services/trips';
 import { draftsApi } from '../../services/drafts';
 import { BudgetInput } from '@/components/budget-input';
@@ -20,6 +22,7 @@ export default function CreateRoute() {
 
 
 function CreateScreen() {
+  const [travelDetails, setTravelDetails] = useState<TravelDetails>(DEFAULT_TRAVEL_DETAILS);
   const [title, setTitle] = useState('');
   const [destination, setDestination] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -39,6 +42,8 @@ function CreateScreen() {
     const dayCount = tripDayCount(startDate, endDate);
     if (!dest) return Alert.alert('목적지를 입력해 주세요', '예: 부산, 제주, 경주');
     if (dayCount < 1 || dayCount > 7) return Alert.alert('여행 기간을 선택해 주세요', '캘린더에서 시작일과 종료일을 선택해 주세요. 최대 7일까지 가능합니다.');
+    const detailsError = travelDetailsError(travelDetails, dayCount);
+    if (detailsError) return Alert.alert('숙소·교통 정보를 확인해 주세요', detailsError);
     if (lock.current) return;
     lock.current = true; setBusy('generate');
     try {
@@ -47,7 +52,7 @@ function CreateScreen() {
         startDate: startDate.trim() || undefined,
         days: dayCount,
         budget: formatBudget(budget) || undefined,
-        styles,
+        styles, travelDetails,
         request: request.trim() || undefined,
       });
       const room = await draftsApi.create({ ...result, title: title.trim() || result.title });
@@ -89,6 +94,8 @@ function CreateScreen() {
 
         <Text style={s.label}>여행 기간 <Text style={s.required}>*</Text></Text>
         <TripPeriodInput start={startDate} end={endDate} onChange={(start, end) => { setStartDate(start); setEndDate(end); }} />
+
+        <TravelDetailsInput destination={destination} value={travelDetails} onChange={setTravelDetails} startDate={startDate} days={tripDayCount(startDate, endDate)} />
 
         <Text style={s.label}>예산</Text>
         <BudgetInput value={budget} onChange={setBudget} />

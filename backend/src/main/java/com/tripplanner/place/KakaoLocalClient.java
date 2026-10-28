@@ -28,7 +28,7 @@ public class KakaoLocalClient {
     private final RestClient http;
     private final AppProperties props;
 
-    public KakaoLocalClient(RestClient externalRestClient, AppProperties props) {
+    public KakaoLocalClient(@org.springframework.beans.factory.annotation.Qualifier("placesRestClient") RestClient externalRestClient, AppProperties props) {
         this.http = externalRestClient;
         this.props = props;
     }
@@ -44,7 +44,13 @@ public class KakaoLocalClient {
      * @param distanceMeters 검색 시 넘긴 중심 좌표로부터의 직선거리 (중심을 안 넘겼으면 null)
      */
     public record PlaceHit(String placeId, String name, String address, double lat, double lng, String phone,
-                           String placeUrl, String categoryGroup, Integer distanceMeters) {}
+                           String placeUrl, String categoryGroup, Integer distanceMeters,
+                           String categoryCode, String categoryName) {
+        public PlaceHit(String placeId, String name, String address, double lat, double lng, String phone,
+                        String placeUrl, String categoryGroup, Integer distanceMeters) {
+            this(placeId, name, address, lat, lng, phone, placeUrl, categoryGroup, distanceMeters, null, null);
+        }
+    }
 
     /** "부산", "제주", "강릉" 같은 목적지의 중심 좌표. 주소 검색 → 실패 시 키워드 검색 */
     public Optional<Area> resolveArea(String destination) {
@@ -81,7 +87,9 @@ public class KakaoLocalClient {
                     blankToNull(d.path("phone").asText(null)),
                     blankToNull(d.path("place_url").asText(null)),
                     blankToNull(d.path("category_group_name").asText(null)),
-                    dist.isBlank() ? null : Integer.valueOf(dist)));
+                    dist.isBlank() ? null : Integer.valueOf(dist),
+                    blankToNull(d.path("category_group_code").asText(null)),
+                    blankToNull(d.path("category_name").asText(null))));
         }
         return out;
     }

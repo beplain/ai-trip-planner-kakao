@@ -43,6 +43,8 @@ class DraftRegenerationTests {
             return result;
         }
     }
+    @Autowired org.springframework.transaction.PlatformTransactionManager transactionManager;
+    @Autowired TripService tripService;
     @Autowired DraftRooms drafts;
     @Autowired DraftRegenerationService regeneration;
     @Autowired UserRepository users;
@@ -182,5 +184,60 @@ class DraftRegenerationTests {
         assertTrue(documents.existsById(room.id()));
         assertTrue(draftInvites.existsById(token));
         assertTrue(trips.existsById(saved.id()));
+    }
+
+    @Test void accommodationAndFixedEventsSurviveDraftRenameAndFinalPersistence() {
+        var hotelDetails = TravelScheduleTests.selectedHotel();
+        var station = new SelectedPlace("222", "부산역", "부산 동구", 35.11, 129.04, null);
+        var details = new TravelDetails(hotelDetails.movementMode(), hotelDetails.stays(),
+                new Transport(TransportMode.KTX, "부산역", "10:00", "부산역", "19:00", station, station));
+        var input = TravelScheduleTests.draft(details, TravelScheduleTests.fixedDays(details, 2));
+        var created = drafts.create(input, owner);
+        var renamed = drafts.rename(created.id(), new RenameDraftRequest(created.version(), "숙소 여행"), owner);
+        assertEquals(details, renamed.draft().travelDetails());
+        assertEquals(input.days(), renamed.draft().days());
+        var saved = drafts.save(renamed.id(), renamed.version(), owner);
+        var reloaded = new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                .execute(status -> trips.findById(saved.id()).orElseThrow().getTravelDetails());
+        assertEquals(details, reloaded);
+        assertEquals(details, saved.travelDetails());
+        assertEquals(station, saved.travelDetails().transport().arrivalLocation());
+        assertTrue(saved.days().stream().flatMap(d -> d.places().stream()).allMatch(p -> p.fixedEventId() != null));
+        var hotel = saved.days().stream().flatMap(d -> d.places().stream()).filter(p -> "stay:0:in".equals(p.fixedEventId())).findFirst().orElseThrow();
+        assertEquals("123456", hotel.placeId()); assertEquals(35.16, hotel.latitude()); assertTrue(hotel.verified());
+        var event = saved.days().get(0).places().get(0);
+        assertThrows(ApiException.class, () -> tripService.deletePlace(saved.id(), event.id(), saved.version(), owner));
+        assertThrows(ApiException.class, () -> tripService.updatePlace(saved.id(), event.id(), new UpdatePlaceRequest("09:00", "수정", saved.version()), owner));
+        assertEquals(details, drafts.get(created.id(), owner).draft().travelDetails());
+    }
+    @Test void cannotRemoveFixedEventsOrChangeAccommodationViaCollaborativeUpdate() {
+        var details = TravelScheduleTests.details();
+        var input = TravelScheduleTests.draft(details, TravelScheduleTests.fixedDays(details, 2));
+        var created = drafts.create(input, owner);
+        var altered = new TripDraft(input.title(), input.destination(), null, null, null, List.of(),
+                List.of(new DayDraft(1, null, List.of()), input.days().get(1)), "AI", List.of(), null, details);
+        assertThrows(ApiException.class, () -> drafts.update(created.id(), new DraftRooms.Update(created.version(), altered), owner));
+        var withoutDetails = new TripDraft(input.title(), input.destination(), null, null, null, List.of(),
+                input.days(), "AI", List.of());
+        assertThrows(ApiException.class, () -> drafts.update(created.id(), new DraftRooms.Update(created.version(), withoutDetails), owner));
+        assertEquals(input, drafts.get(created.id(), owner).draft());
+    }
+    @Test void savedTravelReorderRetainsFixedAnchorsAndAvailableTimeSlots() {
+        var details = TravelScheduleTests.details();
+        var days = new java.util.ArrayList<>(TravelScheduleTests.fixedDays(details, 2));
+        var places = new java.util.ArrayList<>(days.get(0).places());
+        places.add(new PlaceDraft(null, "산책", null, null, null, "17:00", null, null, "관광", false, null, null));
+        places.add(new PlaceDraft(null, "저녁", null, null, null, "19:00", null, null, "식당", false, null, null));
+        days.set(0, new DayDraft(1, null, places));
+        var created = drafts.create(TravelScheduleTests.draft(details, days), owner);
+        var saved = drafts.save(created.id(), created.version(), owner);
+        var day = saved.days().get(0);
+        var ids = new java.util.ArrayList<>(day.places().stream().map(PlaceResponse::id).toList());
+        java.util.Collections.swap(ids, ids.size() - 1, ids.size() - 2);
+        var changed = tripService.reorder(saved.id(), day.id(), new ReorderRequest(ids, saved.version()), owner);
+        assertEquals("저녁", changed.days().get(0).places().get(ids.size() - 2).name());
+        assertEquals("17:00", changed.days().get(0).places().get(ids.size() - 2).visitTime());
+        java.util.Collections.swap(ids, 0, 1);
+        assertThrows(ApiException.class, () -> tripService.reorder(saved.id(), day.id(), new ReorderRequest(ids, changed.version()), owner));
     }
 }

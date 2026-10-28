@@ -15,7 +15,7 @@ public class DraftRegenerationService {
         drafts.checkRegeneration(id, request.version(), user);
         var generated = generator.generate(request.input());
         var replacement = new TripDraft(request.title().trim(), generated.destination(), generated.startDate(), generated.endDate(),
-                generated.budget(), generated.styles(), generated.days(), generated.source(), generated.warnings(), request.input().request());
+                generated.budget(), generated.styles(), generated.days(), generated.source(), generated.warnings(), request.input().request(), generated.travelDetails());
         // If someone edited/finalized/joined during generation, reject rather than overwrite their newer version.
         return drafts.replaceGenerated(id, request.version(), replacement, user);
     }

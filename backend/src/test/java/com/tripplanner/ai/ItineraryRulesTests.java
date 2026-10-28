@@ -44,6 +44,21 @@ class ItineraryRulesTests {
         var night = new AiPlace("전망대", "", "17:00", "관광", "", "", List.of("야경"));
         assertTrue(ItineraryRules.stylesFor(night).isEmpty());
     }
+    @Test void additionalActivitiesDoNotRejectDailyStyleCoverage() {
+        var days = new ArrayList<>(sevenDays().days());
+        var original = days.get(6);
+        var places = new ArrayList<>(original.places());
+        places.add(new AiPlace("쉬어가는 카페", "카페", "14:00", "카페", "휴식", "", List.of()));
+        places.add(new AiPlace("주변 문화시설", "문화시설", "16:00", "문화", "주변 방문", "", List.of()));
+        days.set(6, new AiDay(7, places, List.of()));
+        assertTrue(ItineraryRules.validate(new AiItinerary("여행", days), request(7)).isEmpty());
+    }
+    @Test void supportingCafeCannotReplaceMissingShopping() {
+        var day = new AiDay(1, List.of(food("식당"),
+                new AiPlace("카페", "카페", "14:00", "카페", "휴식", "", List.of())), List.of());
+        assertTrue(ItineraryRules.validate(new AiItinerary("여행", List.of(day)), request(1))
+                .stream().anyMatch(error -> error.contains("빠진 스타일: 쇼핑")));
+    }
     @Test void sevenDaysAcceptedAndEightDaysRejectedAtApiBoundary() {
         try (var factory = Validation.buildDefaultValidatorFactory()) {
             var validator = factory.getValidator();

@@ -8,6 +8,7 @@ import { draftsApi, type DraftRoom } from '../../../../services/drafts';
 import type { Place, TripDraft } from '../../../../services/trips';
 import { MemoModal } from '@/components/memo-modal';
 import { DraggablePlaces } from '@/components/draggable-places';
+import { TravelDetailsSummary } from '@/components/travel-details-input';
 import { TripActions } from '@/components/trip-actions';
 import { useDragScroll } from '@/hooks/use-drag-scroll';
 import { reorderItems } from '@/lib/reorder';
@@ -130,6 +131,7 @@ function DraftScreen() {
             <Text style={s.detailTitle}>{draft.title}</Text>
             <Text style={s.detailMeta}>만든 사람: {creator?.name || '이름 없음'}</Text>
           </View>
+          <TravelDetailsSummary value={draft.travelDetails} />
           <TripActions disabled={busy || syncing || dragging}
             onMap={() => router.push(`/trip/0/map?draftId=${id}`)}
             onShare={() => { void Share.share({ message: shareText(draft) }).catch(() => undefined); }}
@@ -139,6 +141,9 @@ function DraftScreen() {
           </Pressable>
           {room?.myRole !== 'VIEWER' && <Pressable accessibilityRole="button" disabled={busy || syncing || dragging} style={[s.outlineButton, { marginTop: 0 }]} onPress={() => router.push(`/draft/${id}/edit`)}>
             <Text style={s.outlineText}>여행 정보 수정</Text>
+          </Pressable>}
+          {room?.myRole === 'OWNER' && <Pressable accessibilityRole="button" disabled={busy || syncing || dragging || !!memo} style={[s.outlineButton, { marginTop: 0, borderColor: C.danger }, (busy || syncing || dragging || !!memo) && s.disabled]} onPress={deleteDraft}>
+            <Text style={[s.outlineText, { color: C.danger }]}>여행 계획 삭제</Text>
           </Pressable>}
           {!!error && <Text style={s.warnText}>{error}</Text>}
           {!!draft.warnings?.length && <View style={s.warnBox}>{draft.warnings.map((w, i) => <Text key={i} style={s.warnText}>• {w}</Text>)}</View>}
@@ -150,14 +155,11 @@ function DraftScreen() {
           {draft.days.map((day, dayIdx) => <View key={day.dayNumber}>
             <Text style={[s.dayLabel, { color: DAY_COLORS[dayIdx % DAY_COLORS.length] }]}>DAY {day.dayNumber}{day.date ? ` · ${shortDate(day.date)}` : ''}</Text>
             <DraggablePlaces places={day.places} color={DAY_COLORS[dayIdx % DAY_COLORS.length]} editable={canEdit} busy={busy || syncing} scroll={dragScroll}
-              onReorder={(from, to) => updatePlaces(dayIdx, (places) => reorderItems(places, from, to))}
+              onReorder={(from, to) => updatePlaces(dayIdx, (places) => reorderItems(places, from, to).map((p, i) => draft.travelDetails ? { ...p, visitTime: places[i].visitTime } : p))}
               onDelete={(_p, i) => updatePlaces(dayIdx, (places) => places.filter((_, j) => i !== j))}
               onEditMemo={(_p, i) => { memoOpen.current = true; setMemo({ day: dayIdx, index: i, version: room!.version }); }} />
           </View>)}
           {room?.myRole !== 'VIEWER' && <><TalkCalendarConnection /><Pressable accessibilityRole="button" disabled={busy || syncing || dragging} style={[s.primary, (busy || syncing || dragging) && s.disabled]} onPress={() => { void save(); }}><Text style={s.primaryText}>{busy ? '반영 중…' : '이 일정 확정하기'}</Text></Pressable></>}
-          {room?.myRole === 'OWNER' && <Pressable accessibilityRole="button" disabled={busy || syncing || dragging || !!memo} style={[s.outlineButton, (busy || syncing || dragging || !!memo) && s.disabled]} onPress={deleteDraft}>
-            <Text style={[s.outlineText, { color: C.danger }]}>초안 삭제</Text>
-          </Pressable>}
         </ScrollView>
       )}
       <MemoModal visible={!!memoPlace} title={memoPlace?.name ?? ''} initialTime={memoPlace?.visitTime} initialNote={memoPlace?.note}

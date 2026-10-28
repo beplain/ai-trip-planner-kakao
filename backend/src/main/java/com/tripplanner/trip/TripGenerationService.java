@@ -5,6 +5,7 @@ import com.tripplanner.ai.AiItinerary.AiDay;
 import com.tripplanner.ai.AiItinerary.AiPlace;
 import com.tripplanner.ai.ItineraryRequest;
 import com.tripplanner.ai.ItineraryRules;
+import com.tripplanner.ai.ItineraryScheduler;
 import com.tripplanner.common.ApiException;
 import org.springframework.http.HttpStatus;
 import com.tripplanner.ai.OpenAiItineraryClient;
@@ -39,12 +40,25 @@ public class TripGenerationService {
     private final OpenAiItineraryClient openAi;
     private final SampleItineraryGenerator sample;
     private final KakaoLocalClient places;
+    private final RoutedItineraryService routedItinerary;
     private final ExecutorService pool = Executors.newFixedThreadPool(6);
 
     public TripGenerationService(OpenAiItineraryClient openAi, SampleItineraryGenerator sample, KakaoLocalClient places) {
+        this(openAi, sample, places, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public TripGenerationService(OpenAiItineraryClient openAi, SampleItineraryGenerator sample, KakaoLocalClient places, RoutedItineraryService routedItinerary) {
         this.openAi = openAi;
         this.sample = sample;
         this.places = places;
+        this.routedItinerary = routedItinerary;
+    }
+
+    private TripDraft route(TripDraft draft) {
+        long started = System.nanoTime();
+        try { return routedItinerary == null ? draft : routedItinerary.adjust(draft); }
+        finally { log.info("일정 생성 단계=경로보정 소요={}ms", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)); }
     }
 
     @PreDestroy
@@ -53,39 +67,66 @@ public class TripGenerationService {
     }
 
     public TripDraft generate(GenerateRequest req) {
+        long started = System.nanoTime();
+        try { return generateMeasured(req); }
+        finally { log.info("일정 생성 단계=전체 소요={}ms", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)); }
+    }
+
+    private TripDraft generateMeasured(GenerateRequest req) {
         if (req.days() < 1 || req.days() > 7) throw ApiException.badRequest("여행 기간은 1~7일이어야 합니다.");
         if (req.styles() != null && !ItineraryRules.STYLES.containsAll(req.styles()))
             throw ApiException.badRequest("지원하지 않는 여행 스타일입니다.");
+        TravelSchedule.validate(req.travelDetails(), req.days());
+        if (!places.enabled()) throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "PLACES_REQUIRED",
+                "카카오 장소 검색을 사용할 수 없어 확인된 장소만으로 일정을 만들 수 없습니다. 서버 지도 키를 확인해 주세요.");
+        var lookups = new com.tripplanner.place.GenerationPlaces(places);
         String feedback = null;
+        AiItinerary lastCandidate = null;
         for (int attempt = 0; attempt < 2; attempt++) {
-            try { return generateOnce(req, feedback); }
-            catch (InvalidItinerary e) { feedback = e.getMessage(); }
+            try { return route(generateOnce(req, feedback, lookups)); }
+            catch (InvalidItinerary e) { feedback = e.getMessage(); if (e.candidate != null) lastCandidate = e.candidate; }
+            catch (ApiException e) {
+                if (!Set.of("AI_CONSTRAINTS", "AI_FAILED").contains(e.getCode())) throw e;
+                feedback = e.getMessage(); break;
+            }
             if (!openAi.enabled()) break;
         }
-        throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "AI_CONSTRAINTS",
-                "매일의 여행 스타일과 장소 중복 조건을 만족하는 일정을 만들지 못했습니다. 목적지나 스타일을 조정하고 다시 시도해 주세요.");
+        long recoveryStarted = System.nanoTime();
+        TripDraft recovered;
+        try { recovered = new ConfirmedItineraryFallback(lookups, pool).generate(req, lastCandidate, openAi.enabled()); }
+        finally { log.info("일정 생성 단계=대체후보구성 소요={}ms", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - recoveryStarted)); }
+        return route(recovered);
     }
 
     private static class InvalidItinerary extends RuntimeException {
-        InvalidItinerary(String message) { super(message); }
+        final AiItinerary candidate;
+        InvalidItinerary(String message) { this(message, null); }
+        InvalidItinerary(String message, AiItinerary candidate) { super(message); this.candidate = candidate; }
     }
 
-    private TripDraft generateOnce(GenerateRequest req, String feedback) {
+    private TripDraft generateOnce(GenerateRequest req, String feedback, KakaoLocalClient lookups) {
         List<String> warnings = new ArrayList<>();
         String destination = req.destination().trim();
         List<String> styles = req.styles() == null ? List.of() : req.styles();
         ItineraryRequest ir = new ItineraryRequest(destination, req.startDate(), req.days(), req.budget(), styles,
-                req.request());
+                req.request(), req.travelDetails());
 
         AiItinerary ai;
         String source;
         if (openAi.enabled()) {
-            ai = openAi.generate(ir, feedback);
+            long aiStarted = System.nanoTime();
+            AiItinerary raw;
+            try { raw = openAi.generate(ir, feedback); }
+            finally { log.info("일정 생성 단계=AI 소요={}ms", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - aiStarted)); }
+            try { ai = ItineraryScheduler.prepare(raw, ir); }
+            catch (ItineraryScheduler.SchedulingException e) { throw new InvalidItinerary(e.getMessage(), raw); }
             List<String> problems = ItineraryRules.validate(ai, ir);
-            if (!problems.isEmpty()) throw new InvalidItinerary(String.join("; ", problems));
+            if (!problems.isEmpty()) throw new InvalidItinerary(String.join("; ", problems), ai);
             source = "AI";
         } else {
-            ai = sample.generate(ir);
+            try { ai = ItineraryScheduler.prepare(sample.generate(ir), new ItineraryRequest(destination, req.startDate(), req.days(),
+                    req.budget(), List.of(), req.request(), req.travelDetails())); }
+            catch (ItineraryScheduler.SchedulingException e) { throw new InvalidItinerary(e.getMessage()); }
             source = "SAMPLE";
             warnings.add("서버에 OPENAI_API_KEY가 없어 샘플 일정을 만들었습니다.");
         }
@@ -95,13 +136,16 @@ public class TripGenerationService {
         if (!places.enabled()) {
             warnings.add("서버에 KAKAO_REST_API_KEY가 없어 장소 확인과 지도 표시를 할 수 없습니다.");
         } else {
+            long searchStarted = System.nanoTime();
             try {
-                area = places.resolveArea(destination).orElse(null);
+                area = lookups.resolveArea(destination).orElse(null);
                 if (area == null) warnings.add("목적지 위치를 찾지 못해 장소 확인 정확도가 낮을 수 있습니다.");
-                hitsByQuery = searchAll(ai, destination, area);
+                hitsByQuery = searchAll(ai, destination, area, lookups);
             } catch (Exception e) {
                 log.warn("장소 검증 단계 실패: {}", e.getMessage());
-                warnings.add("장소 검색 서비스 오류로 일부 장소를 확인하지 못했습니다.");
+                throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "PLACES_UNAVAILABLE", "카카오 장소 검색에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+            } finally {
+                log.info("일정 생성 단계=장소검색 소요={}ms", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - searchStarted));
             }
         }
 
@@ -129,14 +173,8 @@ public class TripGenerationService {
                     }
                 }
                 if (verified == null) {
-                    // A rejected duplicate must not come back as an unverified recommendation.
-                    if (openAi.enabled() && (!hitsByQuery.getOrDefault(query(p, destination), List.of()).isEmpty()
-                            || !usedNames.add(ItineraryRules.nameKey(p.name(), destination))))
-                        throw new InvalidItinerary(d.dayNumber() + "일차 중복 또는 부적합 장소: " + p.name());
-                    verified = unverified(p);
-                    warnings.add("'" + p.name() + "'은(는) 지도에서 확인되지 않았습니다. 저장 전 확인해 주세요.");
-                } else if (chosen != p) {
-                    warnings.add("'" + p.name() + "'을(를) 같은 스타일의 '" + verified.name() + "'(으)로 대체했습니다.");
+                    throw new InvalidItinerary(d.dayNumber() + "일차 '" + p.name() + "' 및 같은 스타일의 대체 후보를 카카오맵에서 확인하지 못했습니다. "
+                            + "검색 가능한 다른 실제 장소와 대체 후보를 추천하세요.", ai);
                 }
                 out.add(verified);
                 resolved.add(new AiPlace(verified.name(), chosen.searchQuery(), verified.visitTime(), chosen.category(),
@@ -144,35 +182,54 @@ public class TripGenerationService {
             }
             resolvedDays.add(new AiDay(d.dayNumber(), resolved, List.of()));
             LocalDate date = req.startDate() == null ? null : req.startDate().plusDays(i);
+            var events = TravelSchedule.events(req.travelDetails(), req.days());
+            if (req.travelDetails() != null) {
+                if (!openAi.enabled()) out.removeIf(p -> !TravelSchedule.allowed(d.dayNumber(), req.days(), TravelSchedule.minute(p.visitTime()), req.travelDetails(), events));
+                final int n = d.dayNumber();
+                events.stream().filter(e -> e.day() == n).map(TravelSchedule.Event::place).forEach(out::add);
+                out.sort(Comparator.comparing(PlaceDraft::visitTime));
+            }
             days.add(new DayDraft(i + 1, date, out));
         }
 
         if (openAi.enabled()) {
             List<String> problems = ItineraryRules.validate(new AiItinerary(ai.title(), resolvedDays), ir);
-            if (!problems.isEmpty()) throw new InvalidItinerary(String.join("; ", problems));
+            if (!problems.isEmpty()) throw new InvalidItinerary(String.join("; ", problems), ai);
         }
         LocalDate end = req.startDate() == null ? null : req.startDate().plusDays(days.size() - 1L);
         String title = ai.title() == null || ai.title().isBlank() ? destination + " " + req.days() + "일 여행" : ai.title();
         if (title.length() > 100) title = title.substring(0, 100);
-        return new TripDraft(title, destination, req.startDate(), end, req.budget(), styles, days, source,
-                warnings.stream().distinct().toList(), req.request());
+        if (req.travelDetails() != null) warnings.add("이동 시간은 예상 여유 시간 기준이며 실시간 교통을 조회하지 않습니다. 숙소·보관함 운영 조건을 확인해 주세요.");
+        if (req.travelDetails() != null && req.days() > 1 && TravelSchedule.eveningStart(1, req.days(), req.travelDetails(),
+                TravelSchedule.events(req.travelDetails(), req.days())) < 0)
+            warnings.add("첫날 도착·체크인 시각이 늦어 고정 시간을 지키며 추가 저녁 활동을 배치할 수 없습니다.");
+        var result = new TripDraft(title, destination, req.startDate(), end, req.budget(), styles, days, source,
+                warnings.stream().distinct().toList(), req.request(), req.travelDetails());
+        result = TripRouteOptimizer.optimize(result);
+        try { TravelSchedule.validateDraft(result); } catch (ApiException e) { throw new InvalidItinerary(e.getMessage(), ai); }
+        return result;
     }
 
     /** 모든 검색어를 병렬 조회 (중복 검색어는 1번만) */
-    private Map<String, List<PlaceHit>> searchAll(AiItinerary ai, String destination, Area area) {
+    private Map<String, List<PlaceHit>> searchAll(AiItinerary ai, String destination, Area area, KakaoLocalClient lookups) {
         Set<String> queries = new LinkedHashSet<>();
         for (AiDay d : ai.days()) {
             d.places().forEach(p -> queries.add(query(p, destination)));
             if (d.alternatives() != null) d.alternatives().forEach(p -> queries.add(query(p, destination)));
         }
         Map<String, Future<List<PlaceHit>>> futures = new LinkedHashMap<>();
-        for (String q : queries) futures.put(q, pool.submit(() -> places.search(q, area, 15)));
+        for (String q : queries) futures.put(q, pool.submit(() -> lookups.search(q, area, 15)));
         Map<String, List<PlaceHit>> result = new HashMap<>();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
         futures.forEach((q, f) -> {
             try {
-                result.put(q, f.get(15, TimeUnit.SECONDS));
+                long remaining = deadline - System.nanoTime();
+                if (!f.isDone() && remaining <= 0) throw new TimeoutException();
+                result.put(q, f.get(Math.max(1, remaining), TimeUnit.NANOSECONDS));
             } catch (Exception e) {
-                log.warn("검색 실패 '{}': {}", q, e.getMessage());
+                f.cancel(true);
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                log.warn("장소 검색 응답을 제한 시간 내 받지 못했습니다.");
                 result.put(q, List.of());
             }
         });
@@ -183,12 +240,11 @@ public class TripGenerationService {
         String requestedName = ItineraryRules.nameKey(p.name(), destination);
         if (openAi.enabled() && usedNames.contains(requestedName)) return null;
         for (PlaceHit h : hitsByQuery.getOrDefault(query(p, destination), List.of())) {
+            if (h.placeId() == null || h.placeId().isBlank() || h.name() == null || h.name().isBlank()
+                    || !Double.isFinite(h.lat()) || !Double.isFinite(h.lng()) || Math.abs(h.lat()) > 90 || Math.abs(h.lng()) > 180) continue;
             String resolvedName = ItineraryRules.nameKey(h.name(), destination);
             if (used.contains(h.placeId()) || usedNames.contains(resolvedName)) continue;
-            String group = Objects.toString(h.categoryGroup(), "");
-            if ("식당".equals(p.category()) && !group.isBlank() && !"음식점".equals(group)) continue;
-            if ("카페".equals(p.category()) && !group.isBlank() && !"카페".equals(group)) continue;
-            if (!Set.of("식당", "카페").contains(p.category()) && Set.of("음식점", "카페").contains(group)) continue;
+            if (!com.tripplanner.place.PlaceCategories.matches(p.category(), h)) continue;
             if (h.distanceMeters() != null && h.distanceMeters() > MAX_DISTANCE_METERS) continue; // 목적지 밖
             used.add(h.placeId());
             if (openAi.enabled()) usedNames.add(requestedName);
@@ -197,11 +253,6 @@ public class TripGenerationService {
                     p.note(), p.category(), true, h.placeUrl(), h.phone());
         }
         return null;
-    }
-
-    private static PlaceDraft unverified(AiPlace p) {
-        return new PlaceDraft(null, p.name(), null, null, null, p.visitTime(), p.reason(), p.note(), p.category(),
-                false, null, null);
     }
 
     private static String query(AiPlace p, String destination) {

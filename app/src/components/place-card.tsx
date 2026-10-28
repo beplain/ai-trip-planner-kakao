@@ -24,17 +24,18 @@ export function PlaceCard({ place, index, isLast, color = C.primary, editable, b
       </View>
       <View style={s.placeBody}>
         <Text style={[s.placeTime, { color }]}>{place.visitTime ? `${place.visitTime} · ` : ''}장소 {index + 1}{place.category ? ` · ${place.category}` : ''}</Text>
+        {!!place.fixedEventId && <Text style={[s.badgeText, { color: C.primary }]}>고정 일정 · 여행 정보에서 변경</Text>}
         <Text style={s.placeName}>{place.name}</Text>
         {!!place.address && <Text style={s.placeAddr}>{place.address}</Text>}
         <View style={[s.badge, { backgroundColor: place.verified ? '#E7F6EE' : C.warnBg }]}>
           <Text style={[s.badgeText, { color: place.verified ? C.ok : C.warnText }]}>
-            {place.verified ? '카카오맵에서 확인된 장소' : '지도 미확인 · 방문 전 확인 필요'}
+            {place.fixedEventId ? place.verified ? '카카오맵에서 선택한 장소' : '사용자가 지정한 고정 일정' : place.verified ? '카카오맵에서 확인된 장소' : '지도 미확인 · 방문 전 확인 필요'}
           </Text>
         </View>
         {!!place.reason && <Text style={s.placeNote}>{place.reason}</Text>}
         {!!place.note && <Text style={s.placeNote}>💡 {place.note}</Text>}
 
-        {editable && (
+        {editable && !place.fixedEventId && (
           <View style={s.placeActions}>
             {onEditMemo && <Pressable disabled={busy} onPress={onEditMemo} style={s.smallButton}><Text style={s.smallButtonText}>메모·시간</Text></Pressable>}
             {onDelete && <Pressable disabled={busy} onPress={onDelete} style={s.deleteButton}><Text style={s.deleteText}>삭제</Text></Pressable>}

@@ -17,6 +17,14 @@ public class HttpClientConfig {
         return RestClient.builder().requestFactory(factory).build();
     }
 
+    @Bean
+    RestClient placesRestClient() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(3));
+        factory.setReadTimeout(Duration.ofSeconds(8));
+        return RestClient.builder().requestFactory(factory).build();
+    }
+
     /** 외부 API(OpenAI, 카카오) 호출용. 타임아웃을 명시해 앱이 무한 대기하지 않게 함 */
     @Bean
     RestClient externalRestClient() {

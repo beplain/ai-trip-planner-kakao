@@ -49,8 +49,9 @@ public final class ItineraryRules {
             if (day == null) { errors.add("빈 일차"); continue; }
             int n = day.dayNumber();
             if (n < 1 || n > request.days() || !dayNumbers.add(n)) errors.add("일차 번호 중복/범위 오류: " + n);
-            if (day.places() == null || day.places().size() < 2 || day.places().size() > 10) {
-                errors.add(n + "일차 장소 수는 2~10개여야 함");
+            int minimum = request.travelDetails() == null ? 2 : 1;
+            if (day.places() == null || day.places().size() < minimum || day.places().size() > 10) {
+                errors.add(n + "일차 일반 장소 수는 " + minimum + "~10개여야 함");
                 if (day.places() == null) continue;
             }
             Set<String> covered = new HashSet<>();
@@ -60,14 +61,25 @@ public final class ItineraryRules {
                 if (!names.add(nameKey(p.name(), request.destination()))) errors.add("전체 여행 중 장소 중복: " + p.name());
                 int visit = time(p.visitTime());
                 if (visit < 0 || visit <= previous) errors.add(n + "일차 방문 시간 형식/순서 오류: " + p.name());
+                if (request.travelDetails() != null && previous >= 0
+                        && visit < previous + 60 + com.tripplanner.trip.TravelSchedule.gap(request.travelDetails()))
+                    errors.add(n + "일차 방문·이동 여유 시간 부족: " + p.name());
                 previous = visit;
+                if (request.travelDetails() != null && visit >= 0
+                        && !com.tripplanner.trip.TravelSchedule.allowed(n, request.days(), visit, request.travelDetails(),
+                            com.tripplanner.trip.TravelSchedule.events(request.travelDetails(), request.days())))
+                    errors.add(n + "일차 숙소·교통 고정 시간과 겹치는 장소: " + p.name());
                 Set<String> matching = stylesFor(p);
                 covered.addAll(matching);
-                if (!requested.isEmpty() && !"식당".equals(p.category()) && Collections.disjoint(matching, requested))
-                    errors.add(n + "일차 선택 스타일과 무관한 활동: " + p.name());
             }
             Set<String> missing = new LinkedHashSet<>(requested); missing.removeAll(covered);
             if (!missing.isEmpty()) errors.add(n + "일차에 빠진 스타일: " + String.join(", ", missing));
+            if (request.travelDetails() != null) {
+                int evening = com.tripplanner.trip.TravelSchedule.eveningStart(n, request.days(), request.travelDetails(),
+                        com.tripplanner.trip.TravelSchedule.events(request.travelDetails(), request.days()));
+                if (evening >= 0 && day.places().stream().noneMatch(p -> p != null && time(p.visitTime()) >= evening))
+                    errors.add("첫날 체크인 후 최소 20시까지 이어지는 저녁 장소 필요");
+            }
         }
         return errors.stream().limit(20).toList();
     }

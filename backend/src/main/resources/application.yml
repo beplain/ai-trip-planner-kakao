@@ -36,6 +36,10 @@ app:
     client-secret: ${KAKAO_CLIENT_SECRET:}
     # 로그인 후 돌아갈 앱 주소 허용 목록. exp:// 는 Expo Go 개발용이므로 배포 시 제거
     allowed-redirects: ${KAKAO_ALLOWED_REDIRECTS:tripplanner://,exp://}
+  routing:
+    kakao-key: ${KAKAO_MOBILITY_API_KEY:${KAKAO_REST_API_KEY:}}
+    kakao-map-key: ${KAKAO_MAP_API_KEY:${KAKAO_REST_API_KEY:}}
+    max-calls: ${ROUTING_MAX_CALLS:12}
   openai:
     api-key: ${OPENAI_API_KEY:}
     model: ${OPENAI_MODEL:gpt-4o-mini}

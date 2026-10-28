@@ -59,6 +59,7 @@ public class TripService {
     }
 
     public TripResponse createCollaborative(TripDraft draft, Long userId, List<MemberResponse> companions, Long actor) {
+        TravelSchedule.validateDraft(draft);
         User owner = users.findById(userId).orElseThrow(() -> ApiException.notFound("사용자"));
         int dayCount = draft.days().size();
         LocalDate start = draft.startDate();
@@ -66,6 +67,7 @@ public class TripService {
 
         Trip trip = new Trip(owner, draft.title().trim(), draft.destination().trim(), start, end,
                 blankToNull(draft.budget()), cleanStyles(draft.styles()));
+        trip.setTravelDetails(draft.travelDetails());
         trip.addMember(owner, MemberRole.OWNER);
         for (MemberResponse companion : companions) {
             if (!companion.userId().equals(userId)) {
@@ -119,7 +121,18 @@ public class TripService {
         }
         // 컬렉션을 비웠다 다시 넣으면 orphanRemoval로 삭제될 수 있어 orderIndex만 갱신
         List<Long> ids = req.placeIds();
+        if (t.getTravelDetails() != null) {
+            var previous = day.getPlaces().stream().sorted(Comparator.comparingInt(ItineraryPlace::getOrderIndex)).toList();
+            var times = previous.stream().map(ItineraryPlace::getVisitTime).toList();
+            for (int i = 0; i < ids.size(); i++) {
+                var old = previous.get(i); var next = byId.get(ids.get(i));
+                if ((old.getFixedEventId() != null || next.getFixedEventId() != null) && !old.getId().equals(next.getId()))
+                    throw ApiException.badRequest("고정 일정의 위치를 변경할 수 없습니다.");
+                if (next.getFixedEventId() == null) next.updateMemo(times.get(i), next.getNote());
+            }
+        }
         for (int i = 0; i < ids.size(); i++) byId.get(ids.get(i)).setOrderIndex(i);
+        validateSchedule(t);
         t.touch();
         trips.flush();
         return TripMapper.trip(t, m.getRole());
@@ -130,7 +143,9 @@ public class TripService {
         Trip t = m.getTrip();
         checkVersion(t, req.version());
         ItineraryPlace p = findPlace(t, placeId);
+        if (p.getFixedEventId() != null) throw ApiException.badRequest("고정 항목은 초안의 여행 정보 수정에서 변경해 주세요.");
         p.updateMemo(blankToNull(req.visitTime()), blankToNull(req.note()));
+        validateSchedule(t);
         t.touch();
         trips.flush();
         return TripMapper.trip(t, m.getRole());
@@ -141,9 +156,11 @@ public class TripService {
         Trip t = m.getTrip();
         checkVersion(t, version);
         ItineraryPlace p = findPlace(t, placeId);
+        if (p.getFixedEventId() != null) throw ApiException.badRequest("고정 항목은 삭제할 수 없습니다. 초안의 여행 정보를 변경해 주세요.");
         TripDay day = p.getTripDay();
         day.getPlaces().remove(p);
         day.reindex();
+        validateSchedule(t);
         t.touch();
         trips.flush();
         return TripMapper.trip(t, m.getRole());
@@ -196,11 +213,22 @@ public class TripService {
     private static ItineraryPlace toEntity(PlaceDraft p) {
         boolean hasCoords = p.latitude() != null && p.longitude() != null
                 && Math.abs(p.latitude()) <= 90 && Math.abs(p.longitude()) <= 180;
-        return new ItineraryPlace(blankToNull(p.placeId()), p.name().trim(), blankToNull(p.address()),
+        ItineraryPlace entity = new ItineraryPlace(blankToNull(p.placeId()), p.name().trim(), blankToNull(p.address()),
                 hasCoords ? p.latitude() : null, hasCoords ? p.longitude() : null,
                 blankToNull(p.visitTime()), blankToNull(p.reason()), blankToNull(p.note()),
                 blankToNull(p.category()), p.verified() && hasCoords && p.placeId() != null,
                 safeUrl(p.placeUrl()), blankToNull(p.phone()));
+        entity.setFixedEventId(p.fixedEventId());
+        return entity;
+    }
+
+    private static void validateSchedule(Trip t) {
+        var days = t.getDays().stream().map(d -> new DayDraft(d.getDayNumber(), d.getDate(),
+                d.getPlaces().stream().sorted(Comparator.comparingInt(ItineraryPlace::getOrderIndex))
+                 .map(p -> new PlaceDraft(p.getPlaceId(), p.getName(), p.getAddress(), p.getLatitude(), p.getLongitude(),
+                         p.getVisitTime(), p.getReason(), p.getNote(), p.getCategory(), p.isVerified(), p.getPlaceUrl(), p.getPhone(), p.getFixedEventId())).toList())).toList();
+        TravelSchedule.validateDraft(new TripDraft(t.getTitle(), t.getDestination(), t.getStartDate(), t.getEndDate(),
+                t.getBudget(), t.getStyles(), days, null, List.of(), null, t.getTravelDetails()));
     }
 
     /** 앱에서 열 링크이므로 http(s)만 허용 */

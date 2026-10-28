@@ -2,9 +2,22 @@ import { api } from './api';
 
 // 백엔드 TripDtos.java 와 같은 형태. (서버는 null 필드를 생략하므로 대부분 optional)
 
+export type LuggagePlan = 'HOTEL' | 'LOCKER' | 'CARRY';
+export type Stay = {
+  placeId?: string; latitude?: number; longitude?: number; placeUrl?: string;
+  name: string; address: string; checkInDay: number; checkOutDay: number;
+  checkInTime: string; checkOutTime: string; beforeCheckIn: LuggagePlan; afterCheckOut: LuggagePlan;
+};
+export type SelectedPlace = { placeId: string; name: string; address: string; latitude: number; longitude: number; placeUrl: string };
+export type TravelDetails = {
+  movementMode: 'CAR' | 'PUBLIC_TRANSIT'; stays: Stay[];
+  transport?: { arrivalLocation?: SelectedPlace; departureLocation?: SelectedPlace; mode: 'KTX' | 'PLANE' | 'BUS' | 'CAR'; arrivalPlace: string; arrivalTime: string; departurePlace: string; departureTime: string };
+};
+
 export type Role = 'OWNER' | 'EDITOR' | 'VIEWER';
 
 export type Place = {
+  fixedEventId?: string;
   id?: number; // 저장된 일정의 장소 id (초안에는 없음)
   placeId?: string; // 카카오 장소 id (검증된 경우)
   name: string;
@@ -26,6 +39,7 @@ export type Day = { id?: number; dayNumber: number; date?: string; places: Place
 export type Member = { userId: number; name: string; email?: string; role: Role };
 
 export type Trip = {
+  travelDetails?: TravelDetails;
   calendar?: CalendarResult;
   id: number;
   title: string;
@@ -64,6 +78,7 @@ export type TripSummary = {
 };
 
 export type TripDraft = {
+  travelDetails?: TravelDetails;
   request?: string;
   title: string;
   destination: string;
@@ -77,6 +92,7 @@ export type TripDraft = {
 };
 
 export type GenerateInput = {
+  travelDetails?: TravelDetails;
   destination: string;
   startDate?: string;
   days: number;

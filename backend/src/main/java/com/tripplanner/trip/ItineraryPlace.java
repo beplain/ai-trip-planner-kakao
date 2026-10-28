@@ -13,6 +13,11 @@ public class ItineraryPlace {
     @JoinColumn(name = "trip_day_id")
     private TripDay tripDay;
 
+    @Column(length = 100)
+    private String fixedEventId;
+    public String getFixedEventId() { return fixedEventId; }
+    public void setFixedEventId(String id) { fixedEventId = id; }
+
     /** 카카오 장소 id (검증 실패 시 null) */
     @Column(length = 300)
     private String placeId;

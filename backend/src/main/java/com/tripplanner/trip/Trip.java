@@ -37,6 +37,13 @@ public class Trip {
     @Column(length = 500)
     private List<String> styles = new ArrayList<>();
 
+    @Convert(converter = TravelDetailsConverter.class)
+    @Column(columnDefinition = "LONGTEXT")
+    private TripDtos.TravelDetails travelDetails;
+
+    public TripDtos.TravelDetails getTravelDetails() { return travelDetails; }
+    public void setTravelDetails(TripDtos.TravelDetails details) { this.travelDetails = details; }
+
     /** 공동 편집 충돌 감지용. 일정/장소가 바뀔 때마다 touch()로 증가 */
     @Version
     private Long version;
