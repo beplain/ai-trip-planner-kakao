@@ -11,6 +11,17 @@ public class DraftRegenerationService {
     public DraftRegenerationService(DraftRooms drafts, TripGenerationService generator) {
         this.drafts = drafts; this.generator = generator;
     }
+    public DraftOptions options(String id, RegenerateDraftRequest request, Long user) {
+        drafts.checkRegeneration(id,request.version(),user);
+        var options = generator.generateOptions(request.input());
+        drafts.checkRegeneration(id,request.version(),user);
+        return new DraftOptions(options.options().stream().map(option -> {
+            var d = option.draft();
+            return new DraftOption(option.id(),option.label(),option.description(),new TripDraft(request.title().trim(),d.destination(),d.startDate(),d.endDate(),
+                    d.budget(),d.styles(),d.days(),d.source(),d.warnings(),d.request(),d.travelDetails()));
+        }).toList(),options.warnings());
+    }
+
     public DraftRooms.RoomResponse regenerate(String id, RegenerateDraftRequest request, Long user) {
         drafts.checkRegeneration(id, request.version(), user);
         var generated = generator.generate(request.input());

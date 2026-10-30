@@ -55,6 +55,10 @@ public class TripGenerationService {
         this.routedItinerary = routedItinerary;
     }
 
+    private GenerateRequest resolveTransport(GenerateRequest req) {
+        return routedItinerary == null ? req : routedItinerary.resolveTransport(req);
+    }
+
     private TripDraft route(TripDraft draft) {
         long started = System.nanoTime();
         try { return routedItinerary == null ? draft : routedItinerary.adjust(draft); }
@@ -67,23 +71,52 @@ public class TripGenerationService {
     }
 
     public TripDraft generate(GenerateRequest req) {
+        req = resolveTransport(req);
         long started = System.nanoTime();
-        try { return generateMeasured(req); }
+        try { return ExtraRequestRules.require(route(generateMeasured(req, new com.tripplanner.place.GenerationPlaces(places,ExtraRequestRules.mealSearches(req.request(),req.destination().trim(),req.days())), null))); }
         finally { log.info("일정 생성 단계=전체 소요={}ms", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)); }
     }
 
-    private TripDraft generateMeasured(GenerateRequest req) {
+    public TripDtos.DraftOptions generateOptions(GenerateRequest req) {
+        req = resolveTransport(req);
+        long started = System.nanoTime();
+        try {
+            Map<Integer,List<PlaceDraft>> candidates = new HashMap<>();
+            TripDraft base = generateMeasured(req,new com.tripplanner.place.GenerationPlaces(places,ExtraRequestRules.mealSearches(req.request(),req.destination().trim(),req.days())),candidates);
+            List<TripDraft> composed = DraftOptionComposer.compose(base,candidates);
+            List<TripDraft> routed = routedItinerary == null ? composed : routedItinerary.adjustOptions(composed);
+            String[] ids = {"compact","relaxed","varied"};
+            String[] labels = {"이동 최소형","최소 방문형","다양한 방문형"};
+            String[] descriptions = {"가까운 장소를 묶고 이동을 줄이는 구성", "방문 수를 줄여 여유를 두는 구성", "대체 후보를 활용해 다양한 방문을 우선하는 구성"};
+            List<TripDtos.DraftOption> options = new ArrayList<>(); Set<String> seen = new HashSet<>();
+            for (int i=0;i<routed.size();i++) {
+                TripDraft draft = routed.get(i);
+                if (!ExtraRequestRules.violations(draft).isEmpty()) continue;
+                if (seen.add(DraftOptionComposer.fingerprint(draft))) options.add(new TripDtos.DraftOption(ids[i],labels[i],descriptions[i],draft));
+            }
+            if (options.isEmpty()) throw ApiException.badRequest("추가 요청을 충족하는 초안을 만들지 못했어요. 요청이나 여행 조건을 조정해 주세요.");
+            List<String> warnings = options.size() < 3 ? List.of("확인된 장소와 여행 시간의 제약으로 서로 다른 초안을 "+options.size()+"개 준비했습니다.") : List.of();
+            return new TripDtos.DraftOptions(options,warnings);
+        } finally { log.info("일정 생성 단계=초안선택지전체 소요={}ms",TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)); }
+    }
+
+    private TripDraft generateMeasured(GenerateRequest req, KakaoLocalClient lookups, Map<Integer,List<PlaceDraft>> candidatePool) {
         if (req.days() < 1 || req.days() > 7) throw ApiException.badRequest("여행 기간은 1~7일이어야 합니다.");
         if (req.styles() != null && !ItineraryRules.STYLES.containsAll(req.styles()))
             throw ApiException.badRequest("지원하지 않는 여행 스타일입니다.");
+        ExtraRequestRules.validateInput(req.request(),req.days());
         TravelSchedule.validate(req.travelDetails(), req.days());
         if (!places.enabled()) throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "PLACES_REQUIRED",
                 "카카오 장소 검색을 사용할 수 없어 확인된 장소만으로 일정을 만들 수 없습니다. 서버 지도 키를 확인해 주세요.");
-        var lookups = new com.tripplanner.place.GenerationPlaces(places);
         String feedback = null;
         AiItinerary lastCandidate = null;
         for (int attempt = 0; attempt < 2; attempt++) {
-            try { return route(generateOnce(req, feedback, lookups)); }
+            try {
+                TripDraft generated = generateOnce(req, feedback, lookups, candidatePool);
+                var issues = ExtraRequestRules.violations(generated);
+                if (!issues.isEmpty()) throw new InvalidItinerary(String.join("; ", issues));
+                return generated;
+            }
             catch (InvalidItinerary e) { feedback = e.getMessage(); if (e.candidate != null) lastCandidate = e.candidate; }
             catch (ApiException e) {
                 if (!Set.of("AI_CONSTRAINTS", "AI_FAILED").contains(e.getCode())) throw e;
@@ -93,9 +126,9 @@ public class TripGenerationService {
         }
         long recoveryStarted = System.nanoTime();
         TripDraft recovered;
-        try { recovered = new ConfirmedItineraryFallback(lookups, pool).generate(req, lastCandidate, openAi.enabled()); }
+        try { recovered = new ConfirmedItineraryFallback(lookups, pool).generate(req, lastCandidate, openAi.enabled(), candidatePool); }
         finally { log.info("일정 생성 단계=대체후보구성 소요={}ms", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - recoveryStarted)); }
-        return route(recovered);
+        return ExtraRequestRules.require(recovered);
     }
 
     private static class InvalidItinerary extends RuntimeException {
@@ -104,7 +137,7 @@ public class TripGenerationService {
         InvalidItinerary(String message, AiItinerary candidate) { super(message); this.candidate = candidate; }
     }
 
-    private TripDraft generateOnce(GenerateRequest req, String feedback, KakaoLocalClient lookups) {
+    private TripDraft generateOnce(GenerateRequest req, String feedback, KakaoLocalClient lookups, Map<Integer,List<PlaceDraft>> candidatePool) {
         List<String> warnings = new ArrayList<>();
         String destination = req.destination().trim();
         List<String> styles = req.styles() == null ? List.of() : req.styles();
@@ -118,13 +151,13 @@ public class TripGenerationService {
             AiItinerary raw;
             try { raw = openAi.generate(ir, feedback); }
             finally { log.info("일정 생성 단계=AI 소요={}ms", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - aiStarted)); }
-            try { ai = ItineraryScheduler.prepare(raw, ir); }
+            try { ai = ItineraryScheduler.prepare(ExtraRequestRules.addMealCandidates(raw,ir), ir); }
             catch (ItineraryScheduler.SchedulingException e) { throw new InvalidItinerary(e.getMessage(), raw); }
             List<String> problems = ItineraryRules.validate(ai, ir);
             if (!problems.isEmpty()) throw new InvalidItinerary(String.join("; ", problems), ai);
             source = "AI";
         } else {
-            try { ai = ItineraryScheduler.prepare(sample.generate(ir), new ItineraryRequest(destination, req.startDate(), req.days(),
+            try { ai = ItineraryScheduler.prepare(ExtraRequestRules.addMealCandidates(sample.generate(ir),ir), new ItineraryRequest(destination, req.startDate(), req.days(),
                     req.budget(), List.of(), req.request(), req.travelDetails())); }
             catch (ItineraryScheduler.SchedulingException e) { throw new InvalidItinerary(e.getMessage()); }
             source = "SAMPLE";
@@ -149,6 +182,8 @@ public class TripGenerationService {
             }
         }
 
+        var mealSearchResults=hitsByQuery;
+        var reservedMeals=ExtraRequestRules.reserveMeals(req.request(),req.days(),m->mealSearchResults.getOrDefault(m.query(destination),List.of()));
         Set<String> used = new HashSet<>();
         Set<String> usedNames = new HashSet<>();
         List<AiDay> resolvedDays = new ArrayList<>();
@@ -162,13 +197,13 @@ public class TripGenerationService {
             List<AiPlace> resolved = new ArrayList<>();
             for (AiPlace p : d.places()) {
                 AiPlace chosen = p;
-                PlaceDraft verified = pick(p, hitsByQuery, used, usedNames, destination);
+                PlaceDraft verified = pick(p, hitsByQuery, used, usedNames, destination, req.request(), d.dayNumber(), req.days(), reservedMeals);
                 if (verified == null) {
                     for (Iterator<AiPlace> it = alternatives.iterator(); it.hasNext();) {
                         AiPlace candidate = ItineraryRules.atTime(it.next(), p.visitTime());
                         if (!Objects.equals(candidate.category(), p.category())) continue;
                         if (openAi.enabled() && !ItineraryRules.stylesFor(candidate).containsAll(ItineraryRules.stylesFor(p))) continue;
-                        verified = pick(candidate, hitsByQuery, used, usedNames, destination);
+                        verified = pick(candidate, hitsByQuery, used, usedNames, destination, req.request(), d.dayNumber(), req.days(), reservedMeals);
                         if (verified != null) { chosen = candidate; it.remove(); break; }
                     }
                 }
@@ -179,6 +214,15 @@ public class TripGenerationService {
                 out.add(verified);
                 resolved.add(new AiPlace(verified.name(), chosen.searchQuery(), verified.visitTime(), chosen.category(),
                         chosen.reason(), chosen.note(), chosen.matchedStyles()));
+            }
+            if (candidatePool != null) {
+                List<PlaceDraft> candidates = new ArrayList<>(out);
+                Set<String> candidateIds = new HashSet<>(used), candidateNames = new HashSet<>(usedNames);
+                for (AiPlace alternative : alternatives) {
+                    PlaceDraft found = pick(alternative, hitsByQuery, candidateIds, candidateNames, destination, req.request(), d.dayNumber(), req.days(), reservedMeals);
+                    if (found != null) candidates.add(found);
+                }
+                candidatePool.put(d.dayNumber(), List.copyOf(candidates));
             }
             resolvedDays.add(new AiDay(d.dayNumber(), resolved, List.of()));
             LocalDate date = req.startDate() == null ? null : req.startDate().plusDays(i);
@@ -236,12 +280,15 @@ public class TripGenerationService {
         return result;
     }
 
-    private PlaceDraft pick(AiPlace p, Map<String, List<PlaceHit>> hitsByQuery, Set<String> used, Set<String> usedNames, String destination) {
+    private PlaceDraft pick(AiPlace p, Map<String, List<PlaceHit>> hitsByQuery, Set<String> used, Set<String> usedNames, String destination, String extraRequest, int day, int days, Map<String,Integer> reservedMeals) {
         String requestedName = ItineraryRules.nameKey(p.name(), destination);
         if (openAi.enabled() && usedNames.contains(requestedName)) return null;
         for (PlaceHit h : hitsByQuery.getOrDefault(query(p, destination), List.of())) {
             if (h.placeId() == null || h.placeId().isBlank() || h.name() == null || h.name().isBlank()
                     || !Double.isFinite(h.lat()) || !Double.isFinite(h.lng()) || Math.abs(h.lat()) > 90 || Math.abs(h.lng()) > 180) continue;
+            if (reservedMeals.containsKey(h.placeId()) && reservedMeals.get(h.placeId())!=day) continue;
+            if (!ExtraRequestRules.allows(extraRequest, h.name(), p.category())) continue;
+            if (!ExtraRequestRules.allowsMealHit(extraRequest,day,days,p.name(),p.category(),p.reason()+" "+p.searchQuery(),h.name(),h.categoryName())) continue;
             String resolvedName = ItineraryRules.nameKey(h.name(), destination);
             if (used.contains(h.placeId()) || usedNames.contains(resolvedName)) continue;
             if (!com.tripplanner.place.PlaceCategories.matches(p.category(), h)) continue;
@@ -249,8 +296,8 @@ public class TripGenerationService {
             used.add(h.placeId());
             if (openAi.enabled()) usedNames.add(requestedName);
             usedNames.add(resolvedName);
-            return new PlaceDraft(h.placeId(), h.name(), h.address(), h.lat(), h.lng(), p.visitTime(), p.reason(),
-                    p.note(), p.category(), true, h.placeUrl(), h.phone());
+            return ExtraRequestRules.annotateMeal(new PlaceDraft(h.placeId(), h.name(), h.address(), h.lat(), h.lng(), p.visitTime(), p.reason(),
+                    p.note(), p.category(), true, h.placeUrl(), h.phone(), null, h.categoryName()),extraRequest,day,days);
         }
         return null;
     }

@@ -85,3 +85,7 @@ export function parseInviteToken(input: string) {
   if (m) return m[1];
   return /^[A-Za-z0-9_-]{10,}$/.test(v) ? v : null;
 }
+
+export function draftOptionLabel(label?: string): string | undefined {
+  return label === '여유형' ? '최소 방문형' : label;
+}

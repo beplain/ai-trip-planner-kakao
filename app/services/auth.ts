@@ -36,7 +36,7 @@ export const tokenStore = {
  * 사용자가 취소하면 null
  */
 export async function signInWithKakao(calendar = false): Promise<TokenResponse | null> {
-  if (!API_BASE_URL) throw new Error('EXPO_PUBLIC_API_BASE_URL을 .env.local에 설정해 주세요.');
+  if (!API_BASE_URL) throw new Error('지금은 로그인할 수 없어요. 잠시 후 다시 시도해 주세요.');
   const redirect = Linking.createURL('auth');
   const startUrl = `${API_BASE_URL}/api/auth/kakao/start?redirect=${encodeURIComponent(redirect)}${calendar ? '&calendar=true' : ''}`;
   const result = await WebBrowser.openAuthSessionAsync(startUrl, redirect);
@@ -46,7 +46,7 @@ export async function signInWithKakao(calendar = false): Promise<TokenResponse |
   const error = queryParams?.error;
   const code = queryParams?.code;
   if (error === 'access_denied') return null; // 동의 화면에서 취소
-  if (error) throw new Error(`카카오 로그인 실패(${String(error)}). 서버 로그를 확인해 주세요.`);
+  if (error) throw new Error('카카오 로그인에 실패했어요. 잠시 후 다시 시도해 주세요.');
   if (typeof code !== 'string') throw new Error('로그인 코드를 받지 못했습니다.');
   return (await api.post<TokenResponse>('/api/auth/kakao/exchange', { code })).data;
 }

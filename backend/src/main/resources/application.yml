@@ -40,6 +40,8 @@ app:
     kakao-key: ${KAKAO_MOBILITY_API_KEY:${KAKAO_REST_API_KEY:}}
     kakao-map-key: ${KAKAO_MAP_API_KEY:${KAKAO_REST_API_KEY:}}
     max-calls: ${ROUTING_MAX_CALLS:12}
+  train:
+    service-key: ${TAGO_SERVICE_KEY:}
   openai:
     api-key: ${OPENAI_API_KEY:}
     model: ${OPENAI_MODEL:gpt-4o-mini}

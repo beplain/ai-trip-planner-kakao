@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiError } from '../../services/api';
 import type { TravelDetails } from '../../services/trips';
 import { TravelDetailsInput, DEFAULT_TRAVEL_DETAILS, travelDetailsError } from '@/components/travel-details-input';
-import { tripsApi } from '../../services/trips';
+import { tripsApi, combineDraftOptions } from '../../services/trips';
 import { draftsApi } from '../../services/drafts';
 import { BudgetInput } from '@/components/budget-input';
 import { TripPeriodInput } from '@/components/trip-period-input';
@@ -14,6 +14,7 @@ import { DestinationInput } from '@/components/destination-input';
 import { RequireAuth } from '@/components/require-auth';
 import { ScreenHeader } from '@/components/screen-header';
 import { STYLE_OPTIONS, formatBudget, tripDayCount } from '@/lib/format';
+import { destinationRegion } from '@/lib/destination-region';
 import { C, s } from '@/lib/styles';
 
 export default function CreateRoute() {
@@ -38,16 +39,16 @@ function CreateScreen() {
   }
 
   async function generate() {
-    const dest = destination.trim();
+    const dest = destinationRegion(destination);
     const dayCount = tripDayCount(startDate, endDate);
-    if (!dest) return Alert.alert('목적지를 입력해 주세요', '예: 부산, 제주, 경주');
+    if (!dest) return Alert.alert('목적지를 선택해 주세요', '예: 경기도, 서울특별시, 강원특별자치도');
     if (dayCount < 1 || dayCount > 7) return Alert.alert('여행 기간을 선택해 주세요', '캘린더에서 시작일과 종료일을 선택해 주세요. 최대 7일까지 가능합니다.');
-    const detailsError = travelDetailsError(travelDetails, dayCount);
+    const detailsError = travelDetailsError(travelDetails, dayCount, startDate);
     if (detailsError) return Alert.alert('숙소·교통 정보를 확인해 주세요', detailsError);
     if (lock.current) return;
     lock.current = true; setBusy('generate');
     try {
-      const result = await tripsApi.generate({
+      const result = await tripsApi.generateOptions({
         destination: dest,
         startDate: startDate.trim() || undefined,
         days: dayCount,
@@ -55,7 +56,7 @@ function CreateScreen() {
         styles, travelDetails,
         request: request.trim() || undefined,
       });
-      const room = await draftsApi.create({ ...result, title: title.trim() || result.title });
+      const room = await draftsApi.create(combineDraftOptions(result, title));
       router.replace(`/draft/${room.id}`);
     } catch (e) {
       Alert.alert('일정 생성 실패', apiError(e));
@@ -70,8 +71,8 @@ function CreateScreen() {
         <ScreenHeader title="일정 만드는 중" back={false} />
         <View style={s.center}>
           <ActivityIndicator size="large" color={C.primary} />
-          <Text style={[s.sectionTitle, { marginTop: 18 }]}>AI가 일정을 짜고 있어요</Text>
-          <Text style={[s.subtitle, { textAlign: 'center' }]}>장소 추천 후 지도에서 실제 장소인지 확인합니다.{'\n'}20~60초 정도 걸릴 수 있어요.</Text>
+          <Text style={[s.sectionTitle, { marginTop: 18 }]}>선택할 초안을 만들고 있어요</Text>
+          <Text style={[s.subtitle, { textAlign: 'center' }]}>AI가 추천한 장소를 지도에서 확인하고 최대 3가지 초안으로 구성합니다.{'\n'}여행 기간과 지도 조회 상황에 따라 시간이 걸릴 수 있어요.</Text>
         </View>
       </SafeAreaView>
     );
@@ -83,7 +84,7 @@ function CreateScreen() {
       <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
         <Text style={s.eyebrow}>여행 계획의 첫 단계</Text>
         <Text style={s.title}>어디로 떠나볼까요?</Text>
-        <Text style={s.subtitle}>조건을 입력하면 AI가 날짜별 일정 초안을 만들어 드려요.</Text>
+        <Text style={s.subtitle}>조건을 입력하면 최대 3가지 일정 초안을 비교하고 선택할 수 있어요.</Text>
 
         <Text style={s.label}>여행 이름</Text>
         <TextInput value={title} onChangeText={setTitle} placeholder="예: 친구들과 떠나는 부산 여행" style={s.input} maxLength={100} />
@@ -110,14 +111,15 @@ function CreateScreen() {
         </View>
 
         <Text style={s.label}>추가 요청</Text>
-        <TextInput value={request} onChangeText={setRequest} placeholder="예: 부모님과 함께라 많이 걷지 않게" style={[s.input, s.inputMulti]} multiline maxLength={200} />
+        <Text style={s.mutedSmall}>장소 제외·필수 방문·날짜별 식사와 음식 종류·방문 시간 등을 요청할 수 있어요. 여러 요청은 줄바꿈으로 구분해 주세요.</Text>
+        <TextInput value={request} onChangeText={setRequest} placeholder="예: 마지막 날 저녁식사는 삼겹살로 추천해줘" style={[s.input, s.inputMulti]} multiline maxLength={200} />
 
         <View style={s.infoBox}>
           <Text style={s.infoTitle}>이렇게 만들어져요</Text>
-          <Text style={s.infoText}>AI가 장소를 추천하면 서버가 카카오맵에서 실제 장소와 좌표를 확인합니다. 결과를 검토·수정한 뒤 저장할 수 있어요.</Text>
+          <Text style={s.infoText}>카카오맵에서 확인한 장소로 여행 일정을 제안해 드려요. 이동 최소형·최소 방문형·다양한 방문형을 비교하고 초안 화면에서 유형을 전환하며 각각 수정할 수 있어요.</Text>
         </View>
         <Pressable disabled={!!busy} style={[s.primary, !!busy && s.disabled]} onPress={generate}>
-          <Text style={s.primaryText}>AI 일정 초안 만들기</Text>
+          <Text style={s.primaryText}>AI 초안 3가지 비교하기</Text>
         </Pressable>
       </ScrollView>
     </SafeAreaView>

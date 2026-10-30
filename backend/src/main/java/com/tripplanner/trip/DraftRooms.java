@@ -33,7 +33,7 @@ public class DraftRooms {
         this.users = users; this.trips = trips; this.rooms = rooms; this.invitations = invitations; this.json = json;
     }
     public RoomResponse create(TripDraft draft, Long user) {
-        TravelSchedule.validateDraft(draft);
+        DraftVariants.validate(draft);
         if (rooms.countByOwnerIdAndSavedTripIdIsNull(user) >= 50) throw ApiException.badRequest("편집 중인 초안은 최대 50개까지 만들 수 있습니다.");
         var r = rooms.saveAndFlush(new DraftDocument(user, encode(draft), encode(List.of(member(user, MemberRole.OWNER)))));
         return response(r, user);
@@ -52,17 +52,24 @@ public class DraftRooms {
         if (!Objects.equals(before.title(), after.title()) || !Objects.equals(before.destination(), after.destination())
                 || !Objects.equals(before.startDate(), after.startDate()) || !Objects.equals(before.endDate(), after.endDate())
                 || !Objects.equals(before.budget(), after.budget()) || !Objects.equals(before.styles(), after.styles())
-                || !Objects.equals(before.request(), after.request()) || !Objects.equals(before.travelDetails(), after.travelDetails()))
+                || !Objects.equals(before.request(), after.request()) || !Objects.equals(before.travelDetails(), after.travelDetails())
+                || !Objects.equals(before.selectedOption(), after.selectedOption()))
             throw ApiException.badRequest("여행 정보는 '여행 정보 수정'에서 변경해 주세요.");
         TravelSchedule.validateDraft(after);
-        r.edit(encode(update.draft())); rooms.flush(); return response(r, user);
+        var updated = DraftVariants.updateCurrent(before, after.days(), after.warnings());
+        r.edit(encode(updated)); rooms.flush(); return response(r, user);
     }
     public RoomResponse rename(String id, RenameDraftRequest request, Long user) {
         var r = room(id, true); requireEditor(r, user); check(r, request.version());
         var before = content(r);
         var renamed = new TripDraft(request.title().trim(), before.destination(), before.startDate(), before.endDate(),
-                before.budget(), before.styles(), before.days(), before.source(), before.warnings(), before.request(), before.travelDetails());
+                before.budget(), before.styles(), before.days(), before.source(), before.warnings(), before.request(), before.travelDetails(), before.options(), before.selectedOption());
         r.edit(encode(renamed)); rooms.flush(); return response(r, user);
+    }
+    public RoomResponse switchOption(String id, SwitchDraftOptionRequest request, Long user) {
+        var r = room(id,true); requireEditor(r,user); check(r,request.version());
+        var switched = DraftVariants.switchTo(content(r),request.optionId());
+        r.edit(encode(switched)); rooms.flush(); return response(r,user);
     }
     public void delete(String id, Long version, Long user) {
         var r = room(id, true); requireMember(r, user);
@@ -79,7 +86,7 @@ public class DraftRooms {
     }
     public RoomResponse replaceGenerated(String id, Long version, TripDraft generated, Long user) {
         var r = room(id, true); requireEditor(r, user); check(r, version);
-        TravelSchedule.validateDraft(generated);
+        DraftVariants.validate(generated);
         r.edit(encode(generated)); rooms.flush(); return response(r, user);
     }
     public TripResponse save(String id, Long version, Long user) {

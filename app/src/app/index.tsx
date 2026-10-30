@@ -3,7 +3,7 @@ import { useCallback, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { API_BASE_URL, apiError } from '../../services/api';
+import { apiError } from '../../services/api';
 import { draftsApi, type DraftRoom } from '../../services/drafts';
 import { tripsApi, type TripSummary } from '../../services/trips';
 import { RequireAuth } from '@/components/require-auth';
@@ -78,7 +78,7 @@ function TripsTab() {
 
         {drafts.length > 0 && <View style={{ marginTop: 24 }}>
           <Text style={s.sectionTitle}>함께 편집 중인 초안</Text>
-          <Text style={s.mutedSmall}>초안은 DB에 자동 저장돼요 · 눌러서 이어서 편집</Text>
+          <Text style={s.mutedSmall}>눌러서 여행 계획을 이어서 편집하세요</Text>
           {drafts.map((room) => <Pressable key={room.id} style={s.tripCard} onPress={() => router.push(`/draft/${room.id}`)}>
             <View style={s.tripInfo}><Text style={s.tripTitle}>{room.draft.title}</Text><Text style={s.tripMeta}>{room.draft.destination} · 동행자 {room.members.filter((m) => m.role !== 'OWNER').length}명</Text></View><Text style={s.chevron}>›</Text>
           </Pressable>)}
@@ -155,7 +155,6 @@ function MeTab() {
           ])}>
           <Text style={s.outlineText}>로그아웃</Text>
         </Pressable>
-        <View style={s.footerNote}><Text style={s.footerText}>서버: {API_BASE_URL ?? '미설정'}</Text></View>
       </ScrollView>
     </>
   );

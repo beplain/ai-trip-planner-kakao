@@ -7,6 +7,7 @@ import java.util.*;
 
 /** Fixed user commitments are built by the server, never invented by the language model. */
 public final class TravelSchedule {
+    static String returnDeparture(Transport t) { return t.mode()==TransportMode.KTX && t.returnTrain()!=null ? t.returnTrain().departureTime() : t.departureTime(); }
     private TravelSchedule() {}
     public record Event(int day, String id, String name, String location, int minute, String note, SelectedPlace selectedPlace) {
         public Event(int day, String id, String name, String location, int minute, String note) {
@@ -40,7 +41,7 @@ public final class TravelSchedule {
     }
     public static int end(int day, int days, TravelDetails d) {
         return d != null && d.transport() != null && day == days
-                ? minute(d.transport().departureTime()) - departureBuffer(d.transport()) : 22 * 60;
+                ? minute(returnDeparture(d.transport())) - departureBuffer(d.transport()) : 22 * 60;
     }
     public static void validate(TravelDetails d, int days) {
         if (d == null) return; // Existing trips retain their old editing behavior.
@@ -51,8 +52,14 @@ public final class TravelSchedule {
             if (t.mode() == null || blank(t.arrivalPlace()) || blank(t.departurePlace())
                     || t.arrivalPlace().length() > 100 || t.departurePlace().length() > 100)
                 throw ApiException.badRequest("교통편의 도착·출발 장소를 입력해 주세요.");
-            minute(t.arrivalTime()); minute(t.departureTime());
+            minute(t.arrivalTime()); minute(returnDeparture(t));
             validateSelected(t.arrivalLocation()); validateSelected(t.departureLocation());
+            validateSelected(t.originLocation()); validateSelected(t.returnArrivalLocation());
+            if (t.originLocation() != null || t.originTime() != null) {
+                if (t.originLocation() == null) throw ApiException.badRequest("가는 편 출발 장소를 선택해 주세요.");
+                int origin = minute(t.mode()==TransportMode.KTX && t.train()!=null ? t.train().departureTime() : t.originTime());
+                if (origin >= minute(t.arrivalTime())) throw ApiException.badRequest("도착 시각은 가는 편 출발 시각보다 늦어야 합니다. 당일 도착하는 교통편을 선택해 주세요.");
+            }
         }
         Set<Integer> nights = new HashSet<>();
         for (Stay s : stays(d)) {
@@ -105,8 +112,8 @@ public final class TravelSchedule {
         if (t != null) {
             String kind = t.mode() == TransportMode.PLANE ? "공항" : t.mode() == TransportMode.CAR ? "목적지" : "역·터미널";
             out.add(new Event(1, "transport:arrival", kind + " 도착 · " + t.arrivalPlace(), t.arrivalLocation() == null ? t.arrivalPlace() : t.arrivalLocation().address(), minute(t.arrivalTime()), "도착 후 이동 준비 시간을 확보합니다.", t.arrivalLocation()));
-            out.add(new Event(days, "transport:boarding", "귀가 " + kind + " 도착 · " + t.departurePlace(), t.departureLocation() == null ? t.departurePlace() : t.departureLocation().address(), minute(t.departureTime()) - departureBuffer(t), "출발 전 여유 시간입니다. 실제 탑승 수속·운행 정보를 확인해 주세요.", t.departureLocation()));
-            out.add(new Event(days, "transport:departure", "귀가 출발 · " + t.departurePlace(), t.departureLocation() == null ? t.departurePlace() : t.departureLocation().address(), minute(t.departureTime()), "사용자가 입력한 출발 시각", t.departureLocation()));
+            out.add(new Event(days, "transport:boarding", "귀가 " + kind + " 도착 · " + t.departurePlace(), t.departureLocation() == null ? t.departurePlace() : t.departureLocation().address(), minute(returnDeparture(t)) - departureBuffer(t), "출발 전 여유 시간입니다. 실제 탑승 수속·운행 정보를 확인해 주세요.", t.departureLocation()));
+            out.add(new Event(days, "transport:departure", "귀가 출발 · " + t.departurePlace(), t.departureLocation() == null ? t.departurePlace() : t.departureLocation().address(), minute(returnDeparture(t)), t.mode()==TransportMode.KTX && t.returnTrain()!=null ? "선택한 열차 시간표의 출발 시각" : "사용자가 입력한 출발 시각", t.departureLocation()));
         }
         int index = 0;
         for (Stay s : stays(d)) {
@@ -172,6 +179,16 @@ public final class TravelSchedule {
                 .append(" / ").append(stay.checkInDay()).append("일차 ").append(stay.checkInTime()).append(" 체크인 ~ ")
                 .append(stay.checkOutDay()).append("일차 ").append(stay.checkOutTime()).append(" 체크아웃 / 입실 전 짐: ")
                 .append(stay.beforeCheckIn()).append(" / 퇴실 후 짐: ").append(stay.afterCheckOut()).append('\n');
+        if (d.transport() != null && d.transport().originLocation() != null) {
+            var t = d.transport();
+            s.append("가는 편: ").append(t.originLocation().name()).append(" ").append(t.train()==null?t.originTime():t.train().departureTime()).append(" 출발 → ")
+                    .append(t.arrivalPlace()).append(" ").append(t.arrivalTime()).append(" 도착 / 교통: ").append(t.mode())
+                    .append(t.train()!=null ? " / 열차 시간표: "+t.train().trainType()+" "+t.train().trainNo() : t.arrivalAuto() ? " / 경로 조회 소요 시간으로 계산한 예상 도착 시각" : " / 사용자가 확인한 도착 시각").append('\n');
+        }
+        if(d.transport()!=null && d.transport().mode()==TransportMode.KTX && d.transport().returnTrain()!=null) {
+            var t=d.transport().returnTrain();
+            s.append("오는 편 열차: ").append(t.trainType()).append(" ").append(t.trainNo()).append(" / ").append(t.originStation()).append(" ").append(t.departureTime()).append(" 출발 → ").append(t.arrivalStation()).append(" ").append(t.arrivalTime()).append(" 도착\n");
+        }
         List<Event> events = events(d, days);
         int evening = eveningStart(1, days, d, events);
         if (evening >= 0) s.append("첫날 체크인 뒤에도 저녁 식사·관광 등 일반 활동을 이어가며 최소 20:00까지 방문이 이어져야 합니다. ")

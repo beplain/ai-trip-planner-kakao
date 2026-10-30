@@ -19,6 +19,9 @@ final class ConfirmedItineraryFallback {
     ConfirmedItineraryFallback(KakaoLocalClient maps, ExecutorService pool) { this.maps = maps; this.pool = pool; }
 
     TripDraft generate(GenerateRequest input, AiItinerary candidate, boolean aiEnabled) {
+        return generate(input, candidate, aiEnabled, null);
+    }
+    TripDraft generate(GenerateRequest input, AiItinerary candidate, boolean aiEnabled, Map<Integer,List<PlaceDraft>> candidatePool) {
         TravelDetails details = input.travelDetails() == null ? new TravelDetails(MovementMode.PUBLIC_TRANSIT, List.of(), null) : input.travelDetails();
         var request = new ItineraryRequest(input.destination().trim(), input.startDate(), input.days(), input.budget(),
                 input.styles() == null ? List.of() : input.styles(), input.request(), details);
@@ -33,7 +36,7 @@ final class ConfirmedItineraryFallback {
         LinkedHashMap<Query, Future<List<PlaceHit>>> pending = new LinkedHashMap<>();
         for (int n = 1; n <= request.days(); n++) {
             Area center = center(details, n, destination);
-            List<AiPlace> seeds = new ArrayList<>();
+            List<AiPlace> seeds = new ArrayList<>(ExtraRequestRules.mealSeeds(input.request(),request.destination(),n,request.days()));
             if (candidate != null && candidate.days() != null) for (AiDay day : candidate.days()) {
                 if (day == null || day.dayNumber() != n) continue;
                 if (day.places() != null) day.places().stream().filter(Objects::nonNull).limit(6).forEach(seeds::add);
@@ -66,29 +69,33 @@ final class ConfirmedItineraryFallback {
             }
         }
 
+        var reservedMeals=ExtraRequestRules.reserveMeals(input.request(),request.days(),m->hits.getOrDefault(new Query(m.query(request.destination()),center(details,m.day(),destination)),List.of()));
         Set<String> usedIds = new HashSet<>(), usedNames = new HashSet<>();
         List<DayDraft> days = new ArrayList<>();
         List<TravelSchedule.Event> events = TravelSchedule.events(details, request.days());
         for (int n = 1; n <= request.days(); n++) {
             LinkedHashMap<String, PlaceDraft> known = new LinkedHashMap<>();
             LinkedHashMap<String, AiPlace> recommendations = new LinkedHashMap<>();
+            final int currentDay = n;
             // Round-robin prevents the first search query from crowding out other styles.
             for (int rank = 0; rank < 8; rank++) for (Seed seed : dailySeeds.get(n - 1)) {
                 List<PlaceHit> result = hits.getOrDefault(seed.query(), List.of()).stream()
-                        .filter(h -> valid(h, seed.place(), seed.query().area())).toList();
+                        .filter(h -> valid(h, seed.place(), seed.query().area()) && ExtraRequestRules.allows(input.request(), h.name(), seed.place().category())
+                            && ExtraRequestRules.allowsMealHit(input.request(),currentDay,request.days(),seed.place().name(),seed.place().category(),seed.place().reason()+" "+seed.place().searchQuery(),h.name(),h.categoryName())).toList();
                 if (rank >= result.size()) continue;
                 PlaceHit h = result.get(rank);
-                if (h == null) continue;
+                if (h == null || (reservedMeals.containsKey(h.placeId()) && reservedMeals.get(h.placeId())!=n)) continue;
                 String name = ItineraryRules.nameKey(h.name(), request.destination());
                 if (!valid(h, seed.place(), seed.query().area()) || usedIds.contains(h.placeId()) || usedNames.contains(name)
                         || known.containsKey(h.placeId()) || recommendations.values().stream().anyMatch(p -> ItineraryRules.nameKey(p.name(), request.destination()).equals(name))) continue;
                 var p = seed.place();
                 String time = p.visitTime() == null ? "10:00" : p.visitTime();
-                var confirmed = new PlaceDraft(h.placeId(), h.name(), h.address(), h.lat(), h.lng(), time,
-                        "카카오맵에서 확인한 장소로 이동 가능한 시간대에 배치했습니다.", "영업시간·휴무는 방문 전 확인해 주세요.", p.category(), true, h.placeUrl(), h.phone());
+                var confirmed = ExtraRequestRules.annotateMeal(new PlaceDraft(h.placeId(), h.name(), h.address(), h.lat(), h.lng(), time,
+                        "카카오맵에서 확인한 장소로 이동 가능한 시간대에 배치했습니다.", "영업시간·휴무는 방문 전 확인해 주세요.", p.category(), true, h.placeUrl(), h.phone(),null,h.categoryName()),input.request(),n,request.days());
                 known.put(h.placeId(), confirmed);
-                recommendations.put(h.placeId(), new AiPlace(h.name(), h.placeId(), time, p.category(), confirmed.reason(), confirmed.note(), p.matchedStyles()));
+                recommendations.put(h.placeId(), new AiPlace(h.name(), h.placeId(), time, p.category(), confirmed.reason()+" "+Objects.toString(confirmed.categoryPath(),""), confirmed.note(), p.matchedStyles()));
             }
+            if (candidatePool != null) candidatePool.put(n, List.copyOf(known.values()));
             // This day always exists even if the AI omitted it. Only real map results can populate it.
             var planned = ItineraryScheduler.prepareBestEffort(new AiItinerary("초안", List.of(new AiDay(n, List.of(),
                     recommendations.values().stream().limit(32).toList()))), request).days().get(0);
@@ -98,7 +105,7 @@ final class ConfirmedItineraryFallback {
                 PlaceDraft found = known.get(p.searchQuery());
                 if (found == null) continue;
                 output.add(new PlaceDraft(found.placeId(), found.name(), found.address(), found.latitude(), found.longitude(), p.visitTime(),
-                        found.reason(), found.note(), found.category(), true, found.placeUrl(), found.phone()));
+                        found.reason(), found.note(), found.category(), true, found.placeUrl(), found.phone(),null,found.categoryPath()));
                 usedIds.add(found.placeId()); usedNames.add(ItineraryRules.nameKey(found.name(), request.destination()));
                 covered.addAll(ItineraryRules.stylesFor(p));
             }

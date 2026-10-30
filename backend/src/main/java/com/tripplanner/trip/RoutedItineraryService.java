@@ -8,11 +8,29 @@ import java.util.*;
 @Service
 public class RoutedItineraryService {
     private final RouteTimeClient routes;
-    public RoutedItineraryService(RouteTimeClient routes) { this.routes = routes; }
+    private final TransportArrivalService arrival;
+    public RoutedItineraryService(RouteTimeClient routes) { this(routes,new TransportArrivalService(routes)); }
+    @org.springframework.beans.factory.annotation.Autowired
+    public RoutedItineraryService(RouteTimeClient routes,TransportArrivalService arrival) { this.routes = routes; this.arrival=arrival; }
+
+    GenerateRequest resolveTransport(GenerateRequest request) {
+        return arrival.resolve(request);
+    }
 
     public TripDraft adjust(TripDraft draft) {
         TravelDetails details = draft.travelDetails();
         var session = routes.session(details == null ? MovementMode.PUBLIC_TRANSIT : details.movementMode());
+        return adjust(draft,session);
+    }
+
+    List<TripDraft> adjustOptions(List<TripDraft> drafts) {
+        TravelDetails details = drafts.get(0).travelDetails();
+        var session = routes.session(details == null ? MovementMode.PUBLIC_TRANSIT : details.movementMode());
+        return drafts.stream().map(draft -> adjust(draft,session)).toList();
+    }
+
+    private TripDraft adjust(TripDraft draft, RouteTimeClient.Session session) {
+        TravelDetails details = draft.travelDetails();
         List<String> warnings = new ArrayList<>(draft.warnings() == null ? List.of() : draft.warnings());
         if (!session.enabled()) {
             warnings.add("실제 경로 조회 키가 설정되지 않아 직선거리로 동선을 보정했습니다. 이동 시간은 확인되지 않았습니다.");
@@ -64,6 +82,7 @@ public class RoutedItineraryService {
                         : TravelSchedule.minute(nextFixed.visitTime());
                 boolean fits = time < 22 * 60 && time + 60 <= limit && TripRouteOptimizer.fits(place, TravelSchedule.clock(time), origin)
                         && TravelSchedule.allowed(day.dayNumber(), draft.days().size(), time, details, events)
+                        && ExtraRequestRules.mealTimeAllowed(place,TravelSchedule.clock(time),draft.request(),day.dayNumber(),draft.days().size())
                         && (outgoing.isEmpty() || time + 60 + outgoing.getAsInt() + (outgoing.getAsInt() > 0 ? 10 : 0) <= limit);
                 if (!fits) {
                     warnings.add(day.dayNumber()+"일차 이동·고정 일정 시간을 확보하기 위해 제외한 장소: "+place.name()+". 여행 스타일 일부가 빠질 수 있습니다.");

@@ -60,6 +60,7 @@ public class TripService {
 
     public TripResponse createCollaborative(TripDraft draft, Long userId, List<MemberResponse> companions, Long actor) {
         TravelSchedule.validateDraft(draft);
+        ExtraRequestRules.require(draft);
         User owner = users.findById(userId).orElseThrow(() -> ApiException.notFound("사용자"));
         int dayCount = draft.days().size();
         LocalDate start = draft.startDate();

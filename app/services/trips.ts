@@ -9,14 +9,16 @@ export type Stay = {
   checkInTime: string; checkOutTime: string; beforeCheckIn: LuggagePlan; afterCheckOut: LuggagePlan;
 };
 export type SelectedPlace = { placeId: string; name: string; address: string; latitude: number; longitude: number; placeUrl: string };
+export type TrainOption = { id: string; date: string; trainNo: string; trainType: string; originStation: string; arrivalStation: string; departureTime: string; arrivalTime: string };
 export type TravelDetails = {
   movementMode: 'CAR' | 'PUBLIC_TRANSIT'; stays: Stay[];
-  transport?: { arrivalLocation?: SelectedPlace; departureLocation?: SelectedPlace; mode: 'KTX' | 'PLANE' | 'BUS' | 'CAR'; arrivalPlace: string; arrivalTime: string; departurePlace: string; departureTime: string };
+  transport?: { returnArrivalTime?: string; returnArrivalLocation?: SelectedPlace; returnTrain?: TrainOption; train?: TrainOption; originLocation?: SelectedPlace; originTime?: string; arrivalAuto?: boolean; arrivalLocation?: SelectedPlace; departureLocation?: SelectedPlace; mode: 'KTX' | 'PLANE' | 'BUS' | 'CAR'; arrivalPlace: string; arrivalTime: string; departurePlace: string; departureTime: string };
 };
 
 export type Role = 'OWNER' | 'EDITOR' | 'VIEWER';
 
 export type Place = {
+  categoryPath?: string;
   fixedEventId?: string;
   id?: number; // 저장된 일정의 장소 id (초안에는 없음)
   placeId?: string; // 카카오 장소 id (검증된 경우)
@@ -77,7 +79,11 @@ export type TripSummary = {
   updatedAt: string;
 };
 
+export type StoredDraftOption = { id: string; label: string; description?: string; days: Day[]; warnings?: string[] };
+
 export type TripDraft = {
+  options?: StoredDraftOption[];
+  selectedOption?: string;
   travelDetails?: TravelDetails;
   request?: string;
   title: string;
@@ -90,6 +96,18 @@ export type TripDraft = {
   source?: 'AI' | 'SAMPLE';
   warnings?: string[];
 };
+
+export type DraftOption = { id: string; label: string; description: string; draft: TripDraft };
+export type DraftOptions = { options: DraftOption[]; warnings: string[] };
+
+export function combineDraftOptions(result: DraftOptions, title?: string): TripDraft {
+  const first = result.options[0];
+  if (!first) throw new Error('생성된 초안이 없습니다. 다시 시도해 주세요.');
+  const warnings = [...(first.draft.warnings ?? []), ...result.warnings];
+  return { ...first.draft, title: title?.trim() || first.draft.title, selectedOption: first.id, warnings,
+    options: result.options.map((option, index) => ({ id: option.id, label: option.label, description: option.description,
+      days: option.draft.days, warnings: index === 0 ? warnings : [...(option.draft.warnings ?? []), ...result.warnings] })) };
+}
 
 export type GenerateInput = {
   travelDetails?: TravelDetails;
@@ -126,7 +144,21 @@ export type Changes = { changed: boolean; version: number; updatedAt: string; tr
 
 const t = (id: number | string) => `/api/trips/${encodeURIComponent(String(id))}`;
 
+export type RequestCheck = { request: string; status: 'APPLIED' | 'UNMET' | 'UNVERIFIABLE'; detail: string };
+
 export const tripsApi = {
+  async requestChecks(draft: TripDraft) {
+    return (await api.post<RequestCheck[]>('/api/trips/requests/check', draft)).data;
+  },
+  async trainOptions(transport: NonNullable<TravelDetails['transport']>, date: string) {
+    return (await api.post<TrainOption[]>('/api/trips/transport/trains', { transport, date }, { timeout: 45000 })).data;
+  },
+  async transportArrival(input: NonNullable<TravelDetails['transport']>) {
+    return (await api.post<NonNullable<TravelDetails['transport']>>('/api/trips/transport/arrival', input)).data;
+  },
+  async generateOptions(input: GenerateInput) {
+    return (await api.post<DraftOptions>('/api/trips/generate-options', input, { timeout: 300000 })).data;
+  },
   /** AI 초안 생성 (AI + 장소 검증으로 20~60초 걸릴 수 있음) */
   async generate(input: GenerateInput) {
     return (await api.post<TripDraft>('/api/trips/generate', input, { timeout: 300000 })).data;

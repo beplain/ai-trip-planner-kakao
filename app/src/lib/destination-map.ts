@@ -8,7 +8,7 @@ function post(m){if(window.ReactNativeWebView)window.ReactNativeWebView.postMess
 window.onerror=function(){post({type:'error',message:'지도를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'});};
 </script>
 <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(jsKey)}&libraries=services&autoload=false"
-onerror="post({type:'error',message:'카카오 지도 키와 JavaScript SDK 도메인(http://localhost), 카카오맵 사용 설정을 확인해 주세요.'})"></script>
+onerror="post({type:'error',message:'지도를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'})"></script>
 <script>
 var map, marker, geocoder, places, revision=0, userPin=null, userAccuracy=null;
 window.showDestinationUserLocation=function(p){
@@ -35,7 +35,7 @@ function selectPoint(pos){
       post({type:'selection-error',message:'이 지점의 국내 지역을 확인하지 못했어요. 육지의 다른 지점을 선택해 주세요.'});return;
     }
     var area=result.find(function(r){return r.region_type==='B';}) || result[0];
-    var destination=[area.region_1depth_name,area.region_2depth_name,area.region_3depth_name].filter(Boolean).join(' ');
+    var destination=area.region_1depth_name || '';
     if(!destination){post({type:'selection-error',message:'지역명을 확인하지 못했어요. 다른 지점을 선택해 주세요.'});return;}
     post({type:'selected',destination:destination,latitude:pos.getLat(),longitude:pos.getLng()});
   });
@@ -54,7 +54,7 @@ window.searchDestination=function(query){
   });
 };
 if(typeof kakao==='undefined'){
-  post({type:'error',message:'카카오 지도 키와 JavaScript SDK 도메인(http://localhost), 카카오맵 사용 설정을 확인해 주세요.'});
+  post({type:'error',message:'지도를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'});
 }else{
   kakao.maps.load(function(){
     map=new kakao.maps.Map(document.getElementById('map'),{center:new kakao.maps.LatLng(36.5,127.8),level:13});

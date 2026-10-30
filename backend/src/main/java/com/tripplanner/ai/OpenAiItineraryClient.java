@@ -121,6 +121,7 @@ public class OpenAiItineraryClient {
                 - 기본 하루 3~5곳. 선택한 모든 스타일을 반영하기 위해 필요한 경우 최대 10곳까지 허용합니다. 식사는 여행지 체류 시간 안에 가능한 경우에 포함합니다.
                 - 숙소·교통 조건이 있으면 예약 숙소, 체크인·체크아웃, 짐 보관, 역·공항 도착·출발, 단순 이동은 절대 places나 alternatives에 넣지 않습니다. 서버가 별도 추가합니다. 모든 여행 일차는 빠짐없이 반환하세요.
                 - 선택한 스타일 각각을 첫날부터 마지막 날까지 매일 최소 한 장소에 반영합니다. 특정 날짜에만 몰아서 반영하지 않습니다.
+                - 추가 요청의 제외 장소·브랜드·카테고리는 places와 alternatives 모두에서 제외하세요. 필수 방문·방문 시작/종료 시각·일일 방문 수 요청을 모든 날짜에서 지키세요. 선택 스타일과 요청이 충돌하면 임의로 무시하지 마세요.
                 - 선택 스타일을 매일 충족하는 장소를 우선 배치하고 식사·휴식·주변 관광을 보조 활동으로 추가할 수 있습니다. 보조 활동은 선택 스타일을 충족하는 필수 장소를 대신할 수 없습니다. 사용자가 추가 요청에서 특정 활동을 제외했다면 그 요청을 따릅니다.
                 - 쇼핑=쇼핑, 맛집=식당, 자연=자연, 문화=문화, 액티비티=체험, 카페=카페 카테고리를 사용합니다.
                 - 힐링은 자연·카페·관광 중 조용히 쉬는 장소이며 추천 이유에 설명합니다. 야경은 18시 이후의 야경 감상 장소이며 단순 저녁 식당으로 대체하지 않습니다.
@@ -154,6 +155,7 @@ public class OpenAiItineraryClient {
         if (r.extraRequest() != null && !r.extraRequest().isBlank()) {
             sb.append("추가 요청: ").append(r.extraRequest()).append('\n');
         }
+        sb.append(com.tripplanner.trip.ExtraRequestRules.mealPrompt(r.extraRequest(),r.days()));
         sb.append(com.tripplanner.trip.TravelSchedule.prompt(r.travelDetails(), r.days()));
         sb.append("title은 \"").append(r.destination()).append(" ").append(r.days()).append("일 여행\"처럼 짧게 만드세요.");
         return sb.toString();

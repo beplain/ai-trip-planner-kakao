@@ -1,4 +1,5 @@
-import axios from 'axios';
+import { userMessage } from './user-message';
+import { create, isAxiosError } from 'axios';
 
 /**
  * 백엔드 주소: .env.local 의 EXPO_PUBLIC_API_BASE_URL (예: https://xxxx.ngrok-free.dev)
@@ -17,14 +18,14 @@ export function setUnauthorizedHandler(handler: (() => void) | null) {
   onUnauthorized = handler;
 }
 
-export const api = axios.create({
+export const api = create({
   baseURL: API_BASE_URL,
   timeout: 20000,
   headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
 });
 
 api.interceptors.request.use((config) => {
-  if (!config.baseURL) throw new Error('EXPO_PUBLIC_API_BASE_URL을 .env.local에 설정해 주세요.');
+  if (!config.baseURL) throw new Error('지금은 서비스를 이용하기 어려워요. 잠시 후 다시 시도해 주세요.');
   if (accessToken) config.headers.Authorization = `Bearer ${accessToken}`;
   return config;
 });
@@ -34,7 +35,7 @@ api.interceptors.response.use(
   (error) => {
     // 로그인 API 자체의 401은 로그인 화면에서 처리
     const url: string = error?.config?.url ?? '';
-    if (axios.isAxiosError(error) && error.response?.status === 401 && !url.startsWith('/api/auth/')) {
+    if (isAxiosError(error) && error.response?.status === 401 && !url.startsWith('/api/auth/')) {
       onUnauthorized?.();
     }
     return Promise.reject(error);
@@ -42,24 +43,24 @@ api.interceptors.response.use(
 );
 
 export function isConflict(error: unknown) {
-  return axios.isAxiosError(error) && error.response?.status === 409;
+  return isAxiosError(error) && error.response?.status === 409;
 }
 
 /** 서버의 {code, message} 응답을 사용자용 문장으로 */
 export function apiError(error: unknown): string {
-  if (axios.isAxiosError(error)) {
+  if (isAxiosError(error)) {
     const data = error.response?.data as { message?: string } | string | undefined;
-    if (data && typeof data === 'object' && data.message) return data.message;
+    if (data && typeof data === 'object' && data.message) return userMessage(data.message);
     if (!error.response) {
       return error.code === 'ECONNABORTED'
-        ? '서버 응답이 늦습니다. 잠시 후 목록을 새로고침해 결과를 확인해 주세요.'
-        : '서버에 연결할 수 없습니다. 주소(EXPO_PUBLIC_API_BASE_URL)와 서버 실행 상태를 확인해 주세요.';
+        ? '처리가 늦어지고 있어요. 잠시 후 목록을 새로고침해 결과를 확인해 주세요.'
+        : '연결하지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.';
     }
     if (error.response.status === 401) return '로그인이 만료되었습니다. 다시 로그인해 주세요.';
     if (typeof data === 'string' && data.trim().startsWith('<')) {
-      return `서버가 HTML을 반환했습니다(${error.response.status}). ngrok 주소/경고 페이지를 확인해 주세요.`;
+      return '지금은 서비스를 이용하기 어려워요. 잠시 후 다시 시도해 주세요.';
     }
-    return `요청 실패 (${error.response.status})`;
+    return '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.';
   }
-  return error instanceof Error ? error.message : String(error);
+  return userMessage(error instanceof Error ? error.message : error);
 }

@@ -1,3 +1,4 @@
+import { userMessage } from '../../services/user-message';
 import { Linking, Pressable, Text, View } from 'react-native';
 
 import type { Place } from '../../services/trips';
@@ -24,7 +25,7 @@ export function PlaceCard({ place, index, isLast, color = C.primary, editable, b
       </View>
       <View style={s.placeBody}>
         <Text style={[s.placeTime, { color }]}>{place.visitTime ? `${place.visitTime} · ` : ''}장소 {index + 1}{place.category ? ` · ${place.category}` : ''}</Text>
-        {!!place.fixedEventId && <Text style={[s.badgeText, { color: C.primary }]}>고정 일정 · 여행 정보에서 변경</Text>}
+        {!!place.fixedEventId && !place.fixedEventId.startsWith('stay:') && <Text style={[s.badgeText, { color: C.primary }]}>고정 일정 · 여행 정보에서 변경</Text>}
         <Text style={s.placeName}>{place.name}</Text>
         {!!place.address && <Text style={s.placeAddr}>{place.address}</Text>}
         <View style={[s.badge, { backgroundColor: place.verified ? '#E7F6EE' : C.warnBg }]}>
@@ -33,7 +34,7 @@ export function PlaceCard({ place, index, isLast, color = C.primary, editable, b
           </Text>
         </View>
         {!!place.reason && <Text style={s.placeNote}>{place.reason}</Text>}
-        {!!place.note && <Text style={s.placeNote}>💡 {place.note}</Text>}
+        {!!place.note && <Text style={s.placeNote}>💡 {place.note.startsWith('샘플 일정입니다. AI 키') ? userMessage(place.note) : place.note}</Text>}
 
         {editable && !place.fixedEventId && (
           <View style={s.placeActions}>

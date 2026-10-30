@@ -45,7 +45,7 @@ function InviteScreen() {
     if (!invite || sharing) return;
     const jsKey = process.env.EXPO_PUBLIC_KAKAO_JS_KEY?.trim();
     if (!jsKey || !API_BASE_URL) {
-      Alert.alert('카카오톡 공유 설정이 필요해요', '앱의 카카오 JavaScript 키와 서버 주소를 설정해 주세요. 다른 방법으로 공유하기도 사용할 수 있어요.');
+      Alert.alert('카카오톡 공유 설정이 필요해요', '카카오톡으로 공유할 수 없어요. 다른 방법으로 공유하기를 이용해 주세요.');
       return;
     }
     setSharing(true);
@@ -78,7 +78,7 @@ function InviteScreen() {
 
         <View style={s.infoBox}>
           <Text style={s.infoTitle}>공동 편집 안내</Text>
-          <Text style={s.infoText}>{draftId ? '초안 수정은 DB에 자동 저장되며 약 10초마다 동행자에게 반영돼요. 지금 동기화 버튼으로 바로 확인할 수도 있어요. 초안은 백엔드를 재시작해도 유지됩니다.' : '편집 내용은 저장 후 다른 사람 화면에 10초 이내로 반영돼요.'} 두 사람이 동시에 고치면 나중에 저장한 쪽에 “새로고침 후 다시 시도” 안내가 표시됩니다. 링크는 7일 후 만료됩니다.</Text>
+          <Text style={s.infoText}>{draftId ? '수정한 일정은 동행자와 함께 볼 수 있어요. 지금 동기화 버튼으로 최신 내용을 확인할 수 있어요.' : '편집 내용은 저장 후 다른 사람 화면에 10초 이내로 반영돼요.'} 두 사람이 동시에 고치면 나중에 저장한 쪽에 “새로고침 후 다시 시도” 안내가 표시됩니다. 링크는 7일 후 만료됩니다.</Text>
         </View>
 
         {invite ? (

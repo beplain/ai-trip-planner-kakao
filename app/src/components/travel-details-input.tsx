@@ -1,14 +1,17 @@
-import { useState } from 'react';
-import { Keyboard, Pressable, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Keyboard, Pressable, ScrollView, Text, View } from 'react-native';
 import { TimeWheelInput as TimeField } from '@/components/time-wheel-input';
 import { DestinationMapPicker } from '@/components/destination-map-picker';
-import type { LuggagePlan, Stay, TravelDetails } from '../../services/trips';
+import type { LuggagePlan, Stay, TravelDetails, TrainOption } from '../../services/trips';
 import { tripEndDate, shortDate } from '@/lib/format';
 import { s } from '@/lib/styles';
+import { tripsApi } from '../../services/trips';
+import { apiError } from '../../services/api';
+import { patchTransport, transportContext, validTrainSelection, returnQuery, trainThreshold } from '@/lib/train-selection';
 
-export const DEFAULT_TRAVEL_DETAILS: TravelDetails = { movementMode: 'PUBLIC_TRANSIT', stays: [] };
+export const DEFAULT_TRAVEL_DETAILS: TravelDetails = { movementMode: 'CAR', stays: [] };
 const LUGGAGE: [LuggagePlan, string][] = [['CARRY', '직접 소지'], ['HOTEL', '숙소 보관 가능'], ['LOCKER', '보관함 이용']];
-export function travelDetailsError(value: TravelDetails | undefined, days: number): string | undefined {
+export function travelDetailsError(value: TravelDetails | undefined, days: number, startDate = ''): string | undefined {
   if (!value) return;
   const valid = (t: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
   const nights = new Set<number>();
@@ -24,8 +27,12 @@ export function travelDetailsError(value: TravelDetails | undefined, days: numbe
   if (value.transport) {
     const t = value.transport;
     if (!t.arrivalPlace.trim() || !t.departurePlace.trim()) return '카카오맵에서 도착·출발 장소를 선택해 주세요.';
-    if (!valid(t.arrivalTime) || !valid(t.departureTime)) return '교통편 시간은 10:00처럼 24시간 형식으로 입력해 주세요.';
-    if (days === 1 && t.arrivalTime >= t.departureTime) return '당일 여행의 출발 시각은 도착 시각보다 늦어야 합니다.';
+    if (!t.originLocation || !valid(t.originTime ?? '')) return '가는 편의 출발 장소와 시각을 선택해 주세요.';
+    if ((!t.arrivalAuto && !valid(t.arrivalTime)) || !valid(t.departureTime)) return '교통편 시간은 10:00처럼 24시간 형식으로 입력해 주세요.';
+    if (t.mode === 'KTX' && t.arrivalAuto && !validTrainSelection(t, startDate)) return '열차 시간표를 조회해 이용할 열차를 확인해 주세요.';
+    if (t.mode === 'KTX' && t.returnArrivalLocation && !validTrainSelection(returnQuery(t), startDate ? tripEndDate(startDate, days) : '')) return '오는 편 열차 시간표를 조회해 이용할 열차를 확인해 주세요.';
+    if (!t.arrivalAuto && t.originTime! >= t.arrivalTime) return '도착 시각은 가는 편 출발 시각보다 늦어야 합니다.';
+    if (!t.arrivalAuto && days === 1 && t.arrivalTime >= t.departureTime) return '당일 여행의 출발 시각은 도착 시각보다 늦어야 합니다.';
   }
 }
 
@@ -40,9 +47,76 @@ function Choices<T extends string | number>({ value, options, onChange }: {
 export function TravelDetailsInput({ value, onChange, startDate, days, destination }: {
   value?: TravelDetails; onChange: (value: TravelDetails) => void; startDate: string; days: number; destination?: string;
 }) {
-  const [transportSelecting, setTransportSelecting] = useState<'arrival' | 'departure' | null>(null);
+  const [transportSelecting, setTransportSelecting] = useState<'origin' | 'arrival' | 'departure' | 'returnArrival' | null>(null);
   const [selecting, setSelecting] = useState<number | null>(null);
   const details = value ?? DEFAULT_TRAVEL_DETAILS;
+  const latest = useRef(details);
+  useEffect(() => { latest.current = details; }, [details]);
+  const latestDate = useRef(startDate);
+  useEffect(() => { latestDate.current = startDate; }, [startDate]);
+  const returnDate = startDate ? tripEndDate(startDate, days) : '';
+  const latestReturnDate = useRef(returnDate);
+  useEffect(() => { latestReturnDate.current = returnDate; }, [returnDate]);
+  const [returnChecking, setReturnChecking] = useState(false);
+  const [returnResult, setReturnResult] = useState<{ key: string; text?: string; arrivalTime?: string; trains?: TrainOption[]; candidate?: TrainOption; closed?: boolean }>();
+  const returnKey = details.transport ? transportContext(returnQuery(details.transport), returnDate) : '';
+  const [checking, setChecking] = useState(false);
+  const [routeResult, setRouteResult] = useState<{ key: string; text: string; arrivalTime?: string; trains?: TrainOption[]; candidate?: TrainOption; closed?: boolean }>();
+  const routeKey = transportContext(details.transport, startDate);
+  const outboundOpen = details.transport?.mode === 'KTX' && routeResult?.key === routeKey && !!routeResult.trains?.length && !routeResult.closed;
+  const returnOpen = returnResult?.key === returnKey && !!returnResult.trains?.length && !returnResult.closed;
+  function confirmTrain(returning: boolean) {
+    const result = returning ? returnResult : routeResult;
+    const now = latest.current;
+    if (!now.transport || !result?.candidate) return;
+    const next = { ...now, transport: { ...now.transport, ...(returning ? { returnTrain: result.candidate, returnArrivalTime: result.candidate.arrivalTime } : { train: result.candidate, arrivalTime: result.candidate.arrivalTime }) } };
+    latest.current = next; onChange(next);
+    if (returning) setReturnResult({ ...result, closed: true });
+    else setRouteResult({ ...routeResult!, closed: true });
+  }
+  function changeTransport(patch: Partial<NonNullable<TravelDetails['transport']>>) {
+    if (details.transport) onChange({ ...details, transport: patchTransport(details.transport, patch) });
+  }
+  async function checkArrival() {
+    const current = details.transport;
+    if (!current) return;
+    setChecking(true);
+    try {
+      const trains = current.mode === 'KTX' ? await tripsApi.trainOptions(current, startDate) : undefined;
+      const result = trains ? { arrivalTime: trains[0].arrivalTime } : await tripsApi.transportArrival(current);
+      const now = latest.current;
+      if (trains) {
+        if (transportContext(now.transport, latestDate.current) === routeKey)
+          setRouteResult({ key: routeKey, text: '', trains, candidate: trains.find(t => t.id === now.transport?.train?.id) ?? trains[0] });
+        return;
+      }
+      setRouteResult({ key: routeKey, text: `예상 도착 ${result.arrivalTime}`, arrivalTime: result.arrivalTime });
+      if (transportContext(now.transport, latestDate.current) === routeKey) {
+        const next = { ...now, transport: { ...now.transport!, arrivalTime: result.arrivalTime, train: trains?.[0] } };
+        latest.current = next; onChange(next);
+      }
+    } catch (error) { setRouteResult({ key: routeKey, text: apiError(error) }); }
+    finally { setChecking(false); }
+  }
+  async function checkReturn() {
+    const current = details.transport;
+    if (!current) return;
+    setReturnChecking(true);
+    try {
+      const trains = current.mode === 'KTX' ? await tripsApi.trainOptions(returnQuery(current), returnDate) : undefined;
+      const road = trains ? undefined : await tripsApi.transportArrival(returnQuery(current));
+      const now = latest.current;
+      if (now.transport && transportContext(returnQuery(now.transport), latestReturnDate.current) === returnKey) {
+        if (trains) setReturnResult({ key: returnKey, trains, candidate: trains.find(t => t.id === now.transport?.returnTrain?.id) ?? trains[0] });
+        else if (road) {
+          setReturnResult({ key: returnKey, text: `예상 도착 ${road.arrivalTime}`, arrivalTime: road.arrivalTime });
+          const next = { ...now, transport: { ...now.transport, returnArrivalTime: road.arrivalTime } };
+          latest.current = next; onChange(next);
+        }
+      }
+    } catch (error) { setReturnResult({ key: returnKey, text: apiError(error) }); }
+    finally { setReturnChecking(false); }
+  }
   const stays = details.stays ?? [];
   const dates: [number, string][] = Array.from({ length: Math.max(0, Math.min(7, days)) }, (_, i) => [i + 1, `${i + 1}일차${startDate ? ` ${shortDate(tripEndDate(startDate, i + 1))}` : ''}`]);
   function update(index: number, patch: Partial<Stay>) {
@@ -52,10 +126,10 @@ export function TravelDetailsInput({ value, onChange, startDate, days, destinati
     {selecting !== null && stays[selecting] && <DestinationMapPicker visible initialDestination={stays[selecting].name || `${destination ?? ''} 숙소`.trim()}
       onClose={() => setSelecting(null)} onSelect={() => undefined} onPlaceSelect={(place) => { update(selecting, place); setSelecting(null); }} />}
     {transportSelecting !== null && details.transport && <DestinationMapPicker visible placeKind="transport"
-      initialDestination={(transportSelecting === 'arrival' ? details.transport.arrivalPlace : details.transport.departurePlace) || `${destination ?? ''} ${details.transport.mode === 'PLANE' ? '공항' : details.transport.mode === 'BUS' ? '터미널' : details.transport.mode === 'CAR' ? '' : '역'}`.trim()}
+      initialDestination={(transportSelecting === 'origin' ? details.transport.originLocation?.name : transportSelecting === 'arrival' ? details.transport.arrivalPlace : transportSelecting === 'returnArrival' ? details.transport.returnArrivalLocation?.name : details.transport.departurePlace) || `${destination ?? ''} ${details.transport.mode === 'PLANE' ? '공항' : details.transport.mode === 'BUS' ? '터미널' : details.transport.mode === 'CAR' ? '' : '역'}`.trim()}
       onClose={() => setTransportSelecting(null)} onSelect={() => undefined} onPlaceSelect={(place) => {
-        onChange({ ...details, transport: { ...details.transport!, ...(transportSelecting === 'arrival'
-          ? { arrivalPlace: place.name, arrivalLocation: place } : { departurePlace: place.name, departureLocation: place }) } });
+        changeTransport({ ...(transportSelecting === 'origin' ? { originLocation: place } : transportSelecting === 'arrival'
+          ? { arrivalPlace: place.name, arrivalLocation: place } : transportSelecting === 'returnArrival' ? { returnArrivalLocation: place } : { departurePlace: place.name, departureLocation: place }) });
         setTransportSelecting(null);
       }} />}
     <Text style={s.label}>여행 중 이동 방식</Text>
@@ -69,7 +143,7 @@ export function TravelDetailsInput({ value, onChange, startDate, days, destinati
       </View>
       {!!stay.name && <View><Text style={s.sectionTitleSmall}>{stay.name}</Text><Text style={s.mutedSmall}>{stay.address}</Text></View>}
       <Pressable accessibilityRole="button" accessibilityLabel={`숙소 ${index + 1} 카카오맵에서 선택`} style={s.outlineButton}
-        onPress={() => { Keyboard.dismiss(); setSelecting(index); }}><Text style={s.outlineText}>{stay.name ? '숙소 변경 (카카오맵)' : '숙소 선택 (카카오맵)'}</Text></Pressable>
+        onPress={() => { Keyboard.dismiss(); setSelecting(index); }}><Text style={s.outlineText}>{stay.name ? '숙소 변경' : '숙소 선택'}</Text></Pressable>
       <Text style={s.mutedSmall}>입실 날짜</Text><Choices value={stay.checkInDay} options={dates} onChange={(checkInDay) => update(index, { checkInDay })} />
       <Text style={s.mutedSmall}>퇴실 날짜</Text><Choices value={stay.checkOutDay} options={dates} onChange={(checkOutDay) => update(index, { checkOutDay })} />
       <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -86,25 +160,80 @@ export function TravelDetailsInput({ value, onChange, startDate, days, destinati
       <Text style={s.outlineText}>＋ 숙소 추가</Text>
     </Pressable>
     {days < 2 && <Text style={s.mutedSmall}>2일 이상의 여행 기간을 선택하면 숙소를 추가할 수 있어요.</Text>}
-    <Text style={s.label}>여행지 도착·귀가 교통편</Text>
+    <Text style={s.label}>교통편</Text>
     <Pressable accessibilityRole="button" onPress={() => onChange({ ...details, transport: details.transport ? undefined : {
-      mode: 'KTX', arrivalPlace: '', arrivalTime: '10:00', departurePlace: '', departureTime: '18:00',
-    } })} style={s.outlineButton}><Text style={s.outlineText}>{details.transport ? '교통편 입력 해제' : '＋ 도착·출발 시각 입력'}</Text></Pressable>
-    {details.transport && <View style={{ gap: 12 }}>
+      mode: 'KTX', originTime: '08:00', arrivalAuto: true, arrivalPlace: '', arrivalTime: '10:00', departurePlace: '', departureTime: '18:00',
+    } })} style={s.outlineButton}><Text style={s.outlineText}>{details.transport ? '교통편 입력 해제' : '＋ 교통편 추가'}</Text></Pressable>
+    {details.transport && <View style={{ gap: 10, padding: 12, borderRadius: 16, backgroundColor: '#fff' }}>
       <Choices value={details.transport.mode} options={[[ 'KTX', '기차' ], [ 'BUS', '버스·지하철' ], [ 'CAR', '자동차' ]]}
-        onChange={(mode) => onChange({ ...details, transport: { ...details.transport!, mode } })} />
-      <Text style={s.mutedSmall}>첫날 여행지 도착 장소</Text>
-      <Pressable accessibilityRole="button" onPress={() => { Keyboard.dismiss(); setTransportSelecting('arrival'); }} style={[s.input, { justifyContent: 'center' }]}>
-        <Text>{details.transport.arrivalPlace || '카카오맵에서 도착 장소 선택'} ⌄</Text>
-      </Pressable>
-      {!!details.transport.arrivalLocation && <Text style={s.mutedSmall}>{details.transport.arrivalLocation.address}</Text>}
-      <TimeField label="첫날 여행지 도착 시각" value={details.transport.arrivalTime} onChange={(arrivalTime) => onChange({ ...details, transport: { ...details.transport!, arrivalTime } })} />
-      <Text style={s.mutedSmall}>마지막 날 귀가 출발 장소</Text>
-      <Pressable accessibilityRole="button" onPress={() => { Keyboard.dismiss(); setTransportSelecting('departure'); }} style={[s.input, { justifyContent: 'center' }]}>
-        <Text>{details.transport.departurePlace || '카카오맵에서 귀가 출발 장소 선택'} ⌄</Text>
-      </Pressable>
-      {!!details.transport.departureLocation && <Text style={s.mutedSmall}>{details.transport.departureLocation.address}</Text>}
-      <TimeField label="마지막 날 귀가 출발 시각" value={details.transport.departureTime} onChange={(departureTime) => onChange({ ...details, transport: { ...details.transport!, departureTime } })} />
+        onChange={(mode) => changeTransport({ mode, arrivalAuto: true })} />
+      <Text style={s.sectionTitleSmall}>가는 편 · 첫날</Text>
+      <View style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-end' }}>
+        <View style={{ flex: 2, gap: 6 }}><Text style={s.mutedSmall}>출발 장소</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="가는 편 출발 장소 선택" onPress={() => { Keyboard.dismiss(); setTransportSelecting('origin'); }} style={[s.input, { justifyContent: 'center' }]}>
+            <Text numberOfLines={1}>{details.transport.originLocation?.name || '지도에서 선택'} ⌄</Text>
+          </Pressable></View>
+        <TimeField label={details.transport.mode === 'KTX' && details.transport.arrivalAuto ? '출발 희망 시각' : '출발 시각'} value={details.transport.originTime ?? '08:00'} onChange={(originTime) => changeTransport({ originTime })} />
+      </View>
+      <View style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-end' }}>
+        <View style={{ flex: 2, gap: 6 }}><Text style={s.mutedSmall}>도착 장소</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="가는 편 도착 장소 선택" onPress={() => { Keyboard.dismiss(); setTransportSelecting('arrival'); }} style={[s.input, { justifyContent: 'center' }]}>
+            <Text numberOfLines={1}>{details.transport.arrivalPlace || '지도에서 선택'} ⌄</Text>
+          </Pressable></View>
+        {!details.transport.arrivalAuto && <TimeField label="도착 시각" value={details.transport.arrivalTime} onChange={(arrivalTime) => onChange({ ...details, transport: { ...details.transport!, arrivalTime } })} />}
+      </View>
+      {details.transport.mode !== 'PLANE' && <Choices value={details.transport.arrivalAuto ? 'auto' : 'manual'} options={[[ 'auto', details.transport.mode === 'KTX' ? '시간표로 자동 확인' : '도착 시각 자동 계산' ], [ 'manual', '직접 선택' ]]}
+        onChange={(method) => changeTransport({ arrivalAuto: method === 'auto' })} />}
+      {details.transport.arrivalAuto ? <View style={{ gap: 6 }}>
+        <Pressable accessibilityRole="button" disabled={checking || !details.transport.originLocation || !details.transport.arrivalLocation || (details.transport.mode === 'KTX' && !startDate)}
+          style={[s.primary, { marginBottom: 0, marginTop: 4 }, (checking || !details.transport.originLocation || !details.transport.arrivalLocation || (details.transport.mode === 'KTX' && !startDate)) && s.disabled]} onPress={outboundOpen ? () => confirmTrain(false) : checkArrival}>
+          <Text style={s.primaryText}>{checking ? '조회 중…' : details.transport.mode === 'KTX' ? outboundOpen ? '선택' : '열차 시간표 조회' : '예상 도착 시각 확인'}</Text>
+        </Pressable>
+        {routeResult?.key === routeKey && !routeResult.trains && <Text style={routeResult.arrivalTime ? s.sectionTitleSmall : s.mutedSmall}>{routeResult.text}</Text>}
+        {outboundOpen && routeResult?.trains && <ScrollView nestedScrollEnabled style={{ maxHeight: 220 }}>
+          {routeResult.trains.map((train) => <Pressable key={train.id} accessibilityRole="button" disabled={checking} accessibilityState={{ selected: routeResult.candidate?.id === train.id }}
+            onPress={() => setRouteResult({ ...routeResult, candidate: train })}
+            style={[s.outlineButton, { marginTop: 6, paddingVertical: 10 }, routeResult.candidate?.id === train.id && { backgroundColor: '#edf2ff' }]}>
+            <Text style={s.outlineText}>{train.trainType} {train.trainNo} · {train.departureTime} → {train.arrivalTime}</Text>
+          </Pressable>)}
+        </ScrollView>}
+        {details.transport.mode === 'KTX' && details.transport.train && validTrainSelection(details.transport, startDate) && <Text style={s.sectionTitleSmall}>
+          {details.transport.train.trainType} {details.transport.train.trainNo} · {details.transport.train.departureTime} 출발 → {details.transport.train.arrivalTime} 도착
+        </Text>}
+        <Text style={s.mutedSmall}>{details.transport.mode === 'KTX' ? '열차를 고른 뒤 위의 선택 버튼으로 확정해 주세요. 시간표 조회는 예매·좌석 확인이 아닙니다.' : '조회한 이동 시간에 출발 시각을 더해 첫날 일정을 시작해요. 실제 운행 시간은 달라질 수 있어요.'}</Text>
+      </View> : <Text style={s.mutedSmall}>{details.transport.mode === 'KTX' ? '승차권의 도착 시각을 선택해 주세요.' : '운행 정보에서 확인한 도착 시각을 선택해 주세요.'}</Text>}
+      <Text style={[s.sectionTitleSmall, { marginTop: 4 }]}>오는 편 · 마지막 날</Text>
+      <View style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-end' }}>
+        <View style={{ flex: 2, gap: 6 }}><Text style={s.mutedSmall}>귀가 출발 장소</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="오는 편 출발 장소 선택" onPress={() => { Keyboard.dismiss(); setTransportSelecting('departure'); }} style={[s.input, { justifyContent: 'center' }]}>
+            <Text numberOfLines={1}>{details.transport.departurePlace || '지도에서 선택'} ⌄</Text>
+          </Pressable></View>
+        <TimeField label={details.transport.mode === 'KTX' ? '출발 희망 시각' : '출발 시각'} value={details.transport.departureTime} onChange={(departureTime) => changeTransport({ departureTime })} />
+      </View>
+      {details.transport.mode !== 'PLANE' && <View style={{ gap: 6 }}>
+        <Text style={s.mutedSmall}>{details.transport.mode === 'KTX' ? '귀가 도착역 · 시간표 조회 시 선택' : '귀가 도착 장소'}</Text>
+        <Pressable accessibilityRole="button" onPress={() => { Keyboard.dismiss(); setTransportSelecting('returnArrival'); }} style={[s.input, { justifyContent: 'center' }]}>
+          <Text numberOfLines={1}>{details.transport.returnArrivalLocation?.name || '지도에서 선택'} ⌄</Text>
+        </Pressable>
+        {details.transport.returnArrivalLocation && <Pressable accessibilityRole="button" style={s.smallButton} onPress={() => changeTransport({ returnArrivalLocation: undefined })}><Text style={s.smallButtonText}>{details.transport.mode === 'KTX' ? '시간표 선택 해제 · 시각 직접 지정' : '도착 장소 선택 해제'}</Text></Pressable>}
+        <Pressable accessibilityRole="button" disabled={returnChecking || (details.transport.mode === 'KTX' && !returnDate) || !details.transport.departureLocation || !details.transport.returnArrivalLocation}
+          style={[s.primary, { marginBottom: 0, marginTop: 4 }, (returnChecking || (details.transport.mode === 'KTX' && !returnDate) || !details.transport.departureLocation || !details.transport.returnArrivalLocation) && s.disabled]} onPress={returnOpen ? () => confirmTrain(true) : checkReturn}>
+          <Text style={s.primaryText}>{returnChecking ? '조회 중…' : details.transport.mode === 'KTX' ? returnOpen ? '선택' : '열차 시간표 조회' : '예상 도착 시각 확인'}</Text>
+        </Pressable>
+        {details.transport.mode === 'KTX' && <Text style={s.mutedSmall}>여행 마지막 날 {returnDate} · {trainThreshold(details.transport.departureTime)}부터 조회해요. 선택한 열차의 실제 출발 시각에 맞춰 마지막 날 일정을 마무리해요.</Text>}
+        {returnResult?.key === returnKey && returnResult.text && <Text style={returnResult.arrivalTime ? s.sectionTitleSmall : s.mutedSmall}>{returnResult.text}</Text>}
+        {details.transport.mode !== 'KTX' && details.transport.returnArrivalTime && returnResult?.key !== returnKey && <Text style={s.sectionTitleSmall}>예상 도착 {details.transport.returnArrivalTime}</Text>}
+        {details.transport.mode !== 'KTX' && <Text style={s.mutedSmall}>출발 시각에 조회한 이동 시간을 더한 예상 시각이에요. 여행 날짜별 운행 시간표를 확인한 결과는 아닙니다.</Text>}
+        {returnOpen && returnResult?.trains && <ScrollView nestedScrollEnabled style={{ maxHeight: 220 }}>
+          {returnResult.trains.map((train) => <Pressable key={train.id} accessibilityRole="button" disabled={returnChecking} accessibilityState={{ selected: returnResult.candidate?.id === train.id }}
+            onPress={() => setReturnResult({ ...returnResult, candidate: train })} style={[s.outlineButton, { marginTop: 6, paddingVertical: 10 }, returnResult.candidate?.id === train.id && { backgroundColor: '#edf2ff' }]}>
+            <Text style={s.outlineText}>{train.trainType} {train.trainNo} · {train.departureTime} → {train.arrivalTime}</Text>
+          </Pressable>)}
+        </ScrollView>}
+        {details.transport.mode === 'KTX' && details.transport.returnTrain && validTrainSelection(returnQuery(details.transport), returnDate) && <Text style={s.sectionTitleSmall}>
+          {details.transport.returnTrain.trainType} {details.transport.returnTrain.trainNo} · {details.transport.returnTrain.departureTime} 출발 → {details.transport.returnTrain.arrivalTime} 도착
+        </Text>}
+      </View>}
     </View>}
     <Text style={[s.mutedSmall, { marginTop: 10 }]}>시간은 1시간·10분 간격으로 스크롤해 선택하세요. 이동 시간은 예상 여유 시간 기준이며 실시간 교통 정보와 다를 수 있어요.</Text>
   </View>;
@@ -116,6 +245,6 @@ export function TravelDetailsSummary({ value }: { value?: TravelDetails }) {
     <Text style={s.sectionTitleSmall}>숙소·교통</Text>
     <Text style={s.memberNames}>{value.movementMode === 'CAR' ? '자동차 이동' : '대중교통 (버스·지하철) 이동'}</Text>
     {value.stays?.map((stay, index) => <Text key={index} style={s.memberNames}>{stay.name} · {stay.checkInDay}일차 {stay.checkInTime} 입실 ~ {stay.checkOutDay}일차 {stay.checkOutTime} 퇴실{'\n'}{stay.address}{'\n'}입실 전 짐: {LUGGAGE.find(([key]) => key === stay.beforeCheckIn)?.[1]} · 퇴실 후 짐: {LUGGAGE.find(([key]) => key === stay.afterCheckOut)?.[1]}</Text>)}
-    {value.transport && <Text style={s.memberNames}>교통편: {({ KTX: '기차', PLANE: '비행기', BUS: '버스·지하철', CAR: '자동차' })[value.transport.mode]}{'\n'}첫날 {value.transport.arrivalTime} {value.transport.arrivalPlace} 도착{'\n'}마지막 날 {value.transport.departureTime} {value.transport.departurePlace} 출발</Text>}
+    {value.transport && <Text style={s.memberNames}>교통편: {value.transport.train ? `${value.transport.train.trainType} ${value.transport.train.trainNo}` : ({ KTX: '기차', PLANE: '비행기', BUS: '버스·지하철', CAR: '자동차' })[value.transport.mode]}{'\n'}{value.transport.originLocation && <>첫날 {value.transport.train?.departureTime ?? value.transport.originTime} {value.transport.originLocation.name} 출발{'\n'}</>}첫날 {value.transport.arrivalTime} {value.transport.arrivalPlace} 도착{'\n'}마지막 날 {value.transport.mode === 'KTX' ? value.transport.returnTrain?.departureTime ?? value.transport.departureTime : value.transport.departureTime} {value.transport.departurePlace} 출발{value.transport.mode === 'KTX' && value.transport.returnTrain && ` → ${value.transport.returnTrain.arrivalTime} ${value.transport.returnTrain.arrivalStation} 도착 (${value.transport.returnTrain.trainType} ${value.transport.returnTrain.trainNo})`}{value.transport.mode !== 'KTX' && value.transport.returnArrivalLocation && value.transport.returnArrivalTime && ` → ${value.transport.returnArrivalTime} ${value.transport.returnArrivalLocation.name} 예상 도착`}</Text>}
   </View>;
 }

@@ -21,6 +21,16 @@ public class DraftController {
                                               @Valid @RequestBody TripDtos.RegenerateDraftRequest request) {
         return regeneration.regenerate(id, request, CurrentUser.id(jwt));
     }
+    @PostMapping("/{id}/regenerate-options")
+    public TripDtos.DraftOptions regenerateOptions(@AuthenticationPrincipal Jwt jwt, @PathVariable String id,
+                                                   @Valid @RequestBody TripDtos.RegenerateDraftRequest request) {
+        return regeneration.options(id,request,CurrentUser.id(jwt));
+    }
+    @PostMapping("/{id}/regenerate-selection")
+    public DraftRooms.RoomResponse selectRegenerated(@AuthenticationPrincipal Jwt jwt, @PathVariable String id,
+                                                     @Valid @RequestBody TripDtos.SelectRegeneratedRequest request) {
+        return drafts.replaceGenerated(id,request.version(),request.draft(),CurrentUser.id(jwt));
+    }
     @PostMapping public DraftRooms.RoomResponse create(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody TripDtos.TripDraft draft) {
         return drafts.create(draft, CurrentUser.id(jwt));
     }
@@ -30,6 +40,11 @@ public class DraftController {
     @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
     public void delete(@AuthenticationPrincipal Jwt jwt, @PathVariable String id, @RequestParam Long version) {
         drafts.delete(id, version, CurrentUser.id(jwt));
+    }
+    @PutMapping("/{id}/option")
+    public DraftRooms.RoomResponse switchOption(@AuthenticationPrincipal Jwt jwt, @PathVariable String id,
+                                               @Valid @RequestBody TripDtos.SwitchDraftOptionRequest request) {
+        return drafts.switchOption(id,request,CurrentUser.id(jwt));
     }
     @PutMapping("/{id}/title") public DraftRooms.RoomResponse rename(@AuthenticationPrincipal Jwt jwt, @PathVariable String id,
             @Valid @RequestBody TripDtos.RenameDraftRequest request) {

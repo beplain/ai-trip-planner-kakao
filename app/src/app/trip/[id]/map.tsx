@@ -10,7 +10,7 @@ import { apiError } from '../../../../services/api';
 import { tripsApi, type Place, type TripDraft } from '../../../../services/trips';
 import { RequireAuth } from '@/components/require-auth';
 import { ScreenHeader } from '@/components/screen-header';
-import { hasCoords } from '@/lib/format';
+import { draftOptionLabel, hasCoords } from '@/lib/format';
 import { buildKakaoMapHtml, openDirections, openPlacePage } from '@/lib/kakao-map';
 import { C, DAY_COLORS, s } from '@/lib/styles';
 
@@ -24,7 +24,7 @@ type MapPlace = { key: string; label: string; lat: number; lng: number };
 type MapGroup = { color: string; places: MapPlace[] };
 
 function TripMapScreen() {
-  const { id, draftId } = useLocalSearchParams<{ id: string; draftId?: string }>();
+  const { id, draftId, optionId } = useLocalSearchParams<{ id: string; draftId?: string; optionId?: string }>();
   const [trip, setTrip] = useState<TripDraft | null>(null);
   const [dayIdx, setDayIdx] = useState<number | 'all'>('all');
   const [mapReady, setMapReady] = useState(false);
@@ -35,7 +35,7 @@ function TripMapScreen() {
   const mounted = useRef(true);
   const [selected, setSelected] = useState<{ place: Place; dayNumber: number; order: number } | null>(null);
   const webRef = useRef<WebView<Record<never, never>>>(null);
-  const html = useMemo(() => buildKakaoMapHtml(KAKAO_JS_KEY), []);
+  const source = useMemo(() => ({ html: buildKakaoMapHtml(KAKAO_JS_KEY), baseUrl: 'http://localhost' }), []);
 
   useEffect(() => {
     mounted.current = true;
@@ -67,7 +67,7 @@ function TripMapScreen() {
       ]);
       if (mounted.current) setPosition(current);
     } catch (e) {
-      if (mounted.current) Alert.alert('위치를 확인하지 못했어요', e instanceof Error ? e.message : '잠시 후 다시 시도해 주세요.');
+      if (mounted.current) Alert.alert('위치를 확인하지 못했어요', apiError(e));
     } finally {
       if (timeout) clearTimeout(timeout);
       locationLock.current = false;
@@ -76,8 +76,11 @@ function TripMapScreen() {
   }
 
   useEffect(() => {
-    (draftId ? draftsApi.get(draftId).then((room) => room.draft) : tripsApi.get(Number(id))).then(setTrip).catch((e) => Alert.alert('불러오기 실패', apiError(e)));
-  }, [id, draftId]);
+    (draftId ? draftsApi.get(draftId).then((room) => {
+      const option = room.draft.options?.find((entry) => entry.id === optionId);
+      return option ? { ...room.draft, days: option.days, warnings: option.warnings, selectedOption: option.id } : room.draft;
+    }) : tripsApi.get(Number(id))).then(setTrip).catch((e) => Alert.alert('불러오기 실패', apiError(e)));
+  }, [id, draftId, optionId]);
 
   // 지도에 보낼 데이터 + 마커 key → 장소 매핑
   const { groups, lookup, missing } = useMemo(() => {
@@ -116,12 +119,15 @@ function TripMapScreen() {
   function onMessage(e: WebViewMessageEvent) {
     let msg: { type: string; key?: string; message?: string };
     try { msg = JSON.parse(e.nativeEvent.data); } catch { return; }
-    if (msg.type === 'ready') { setSelected(null); setMapReady(true); }
+    if (msg.type === 'ready') {
+      setSelected(null); setMapError(null); setMapReady(true);
+      webRef.current?.injectJavaScript(`window.renderPlaces(${JSON.stringify(groups)}); true;`);
+    }
     else if (msg.type === 'select' && msg.key) setSelected(lookup.get(msg.key) ?? null);
     else if (msg.type === 'error') {
       setMapError(msg.message === 'sdk-load'
-        ? '카카오 지도를 불러오지 못했어요. EXPO_PUBLIC_KAKAO_JS_KEY와 카카오 콘솔의 [플랫폼 > Web] 도메인(http://localhost) 등록을 확인해 주세요.'
-        : `지도 오류: ${msg.message}`);
+        ? '지도를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'
+        : '지도를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.');
     }
   }
 
@@ -131,43 +137,42 @@ function TripMapScreen() {
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
-      <ScreenHeader title={trip.title} />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 10, gap: 8 }}>
-        <Pressable onPress={() => { setSelected(null); setDayIdx('all'); }} style={[s.chip, dayIdx === 'all' && s.chipActive]}>
-          <Text style={[s.chipText, dayIdx === 'all' && s.chipTextActive]}>전체</Text>
-        </Pressable>
-        {trip.days.map((d, i) => (
-          <Pressable key={d.id ?? i} onPress={() => { setSelected(null); setDayIdx(i); }} style={[s.chip, dayIdx === i && { borderColor: DAY_COLORS[i % DAY_COLORS.length], borderWidth: 2 }]}>
-            <Text style={[s.chipText, { color: DAY_COLORS[i % DAY_COLORS.length] }]}>DAY {d.dayNumber}</Text>
+      <ScreenHeader title={draftOptionLabel(trip.options?.find((entry) => entry.id === trip.selectedOption)?.label) ?? '여행 지도'} />
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10, gap: 8 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1, minWidth: 0 }} contentContainerStyle={{ alignItems: 'center', gap: 8, paddingRight: 8 }}>
+          <Pressable onPress={() => { setSelected(null); setDayIdx('all'); }} style={[s.chip, dayIdx === 'all' && s.chipActive]}>
+            <Text style={[s.chipText, dayIdx === 'all' && s.chipTextActive]}>전체</Text>
           </Pressable>
-        ))}
-      </ScrollView>
+          {trip.days.map((d, i) => (
+            <Pressable key={d.id ?? i} onPress={() => { setSelected(null); setDayIdx(i); }} style={[s.chip, dayIdx === i && { borderColor: DAY_COLORS[i % DAY_COLORS.length], borderWidth: 2 }]}>
+              <Text style={[s.chipText, { color: DAY_COLORS[i % DAY_COLORS.length] }]}>DAY {d.dayNumber}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+        <Pressable accessibilityRole="button" accessibilityLabel="현재 위치 확인" disabled={!mapReady || !!mapError || locating}
+          onPress={() => { void locate(); }} style={[s.smallButton, { minHeight: 44, paddingHorizontal: 12, justifyContent: 'center', flexShrink: 0 }, (!mapReady || !!mapError || locating) && s.disabled]}>
+          <Text style={s.smallButtonText}>{locating ? '위치 확인 중…' : '◎ 내 위치'}</Text>
+        </Pressable>
+      </View>
 
       {!KAKAO_JS_KEY ? (
         <View style={s.center}>
-          <Text style={s.emptyTitle}>카카오 지도 키가 없어요</Text>
-          <Text style={[s.empty, { textAlign: 'center' }]}>.env.local에 EXPO_PUBLIC_KAKAO_JS_KEY를 넣고 앱을 다시 시작해 주세요.</Text>
+          <Text style={s.emptyTitle}>지도를 이용할 수 없어요</Text>
+          <Text style={[s.empty, { textAlign: 'center' }]}>잠시 후 지도를 다시 열어 주세요.</Text>
         </View>
       ) : (
         <View style={{ flex: 1 }}>
           <WebView<Record<never, never>>
             ref={webRef}
-            source={{ html, baseUrl: 'http://localhost' }}
+            source={source}
+            onLoadStart={() => { setMapReady(false); setMapError(null); }}
+            onLoadEnd={() => webRef.current?.injectJavaScript(`if (window.renderPlaces) window.renderPlaces(${JSON.stringify(groups)}); true;`)}
             originWhitelist={['*']}
             javaScriptEnabled
             domStorageEnabled
             onMessage={onMessage}
             style={{ flex: 1 }}
           />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="현재 위치 확인"
-            disabled={!mapReady || !!mapError || locating}
-            onPress={() => { void locate(); }}
-            style={[s.smallButton, { position: 'absolute', top: 100, right: 12, minHeight: 44, paddingHorizontal: 16, justifyContent: 'center', backgroundColor: '#fff' }, (!mapReady || !!mapError || locating) && s.disabled]}
-          >
-            <Text style={s.smallButtonText}>{locating ? '위치 확인 중…' : '◎ 내 위치'}</Text>
-          </Pressable>
           {mapError && (
             <View style={[s.warnBox, { position: 'absolute', top: 12, left: 12, right: 12, marginTop: 0 }]}>
               <Text style={s.warnText}>{mapError}</Text>
@@ -175,7 +180,7 @@ function TripMapScreen() {
           )}
           {mapReady && count === 0 && !mapError && (
             <View style={[s.infoBox, { position: 'absolute', top: 12, left: 12, right: 12, marginTop: 0 }]}>
-              <Text style={s.infoText}>좌표가 확인된 장소가 없어 지도에 표시할 수 없어요. 서버의 KAKAO_REST_API_KEY 설정을 확인해 주세요.</Text>
+              <Text style={s.infoText}>지도에 표시할 수 있는 장소가 없어요. 일정을 확인해 주세요.</Text>
             </View>
           )}
 

@@ -65,7 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const connectCalendar = useCallback(async () => {
     const result = await signInWithKakao(true);
     if (!result) return false;
-    if (!user || result.user.id !== user.id) throw new Error('현재 앱에 로그인한 카카오 계정과 같은 계정으로 연결해 주세요. 개발용 로그인 중이라면 로그아웃 후 카카오로 로그인해 주세요.');
+    if (!user || result.user.id !== user.id) throw new Error('현재 로그인한 카카오 계정과 같은 계정으로 연결해 주세요. 계정이 다르면 로그아웃 후 다시 로그인해 주세요.');
     if (!result.user.calendarConnected) throw new Error('톡캘린더 권한에 동의하지 않았습니다. 연결 화면에서 일정 생성 권한을 허용해 주세요.');
     await applyToken(result.accessToken, result.user);
     return true;

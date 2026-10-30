@@ -56,6 +56,21 @@ export function buildKakaoMapHtml(jsKey: string) {
         onerror="post({type:'error',message:'sdk-load'})"></script>
 <script>
   var map = null, objs = [], pins = {}, userPin = null, userAccuracy = null;
+  var latestGroups = [], lineEntries = [], renderQueued = false;
+  function frame(fn){ (window.requestAnimationFrame || function(cb){ return setTimeout(cb, 16); })(fn); }
+  function refreshLines(){ lineEntries.forEach(function(entry){ entry.line.setPath(entry.path); }); }
+  function scheduleRender(){
+    if (!map || renderQueued) return;
+    renderQueued = true;
+    frame(function(){ frame(function(){
+      renderQueued = false;
+      var container = document.getElementById('map');
+      if (!container.clientWidth || !container.clientHeight) return;
+      map.relayout();
+      drawGroups(latestGroups);
+      frame(refreshLines);
+    }); });
+  }
   window.showUserLocation = function(p){
     if (!map || !Number.isFinite(p.latitude) || !Number.isFinite(p.longitude)) return;
     var pos = new kakao.maps.LatLng(p.latitude, p.longitude);
@@ -74,12 +89,15 @@ export function buildKakaoMapHtml(jsKey: string) {
     map.setLevel(4);
     map.setCenter(pos);
   };
-  function clearAll(){ objs.forEach(function(o){ o.setMap(null); }); objs = []; pins = {}; }
+  function clearAll(){ objs.forEach(function(o){ o.setMap(null); }); objs = []; pins = {}; lineEntries = []; }
   window.selectPin = function(key){
     Object.keys(pins).forEach(function(k){ pins[k].className = 'pin' + (k === key ? ' sel' : ''); });
   };
   window.renderPlaces = function(groups){
-    if (!map) return;
+    latestGroups = groups || [];
+    scheduleRender();
+  };
+  function drawGroups(groups){
     clearAll();
     var bounds = new kakao.maps.LatLngBounds(), n = 0, last = null;
     groups.forEach(function(g){
@@ -96,17 +114,22 @@ export function buildKakaoMapHtml(jsKey: string) {
       });
       if (path.length > 1) {
         var line = new kakao.maps.Polyline({ path: path, strokeWeight: 3, strokeColor: g.color, strokeOpacity: 0.8, strokeStyle: 'shortdash' });
-        line.setMap(map); objs.push(line);
+        line.setMap(map); objs.push(line); lineEntries.push({line:line,path:path});
       }
     });
     if (n === 1) { map.setLevel(4); map.setCenter(last); }
     else if (n > 1) { map.setBounds(bounds, 60, 40, 140, 40); }
-  };
+  }
   if (typeof kakao === 'undefined') {
     post({ type: 'error', message: 'sdk-load' });
   } else {
     kakao.maps.load(function(){
       map = new kakao.maps.Map(document.getElementById('map'), { center: new kakao.maps.LatLng(36.5, 127.8), level: 12 });
+      kakao.maps.event.addListener(map, 'idle', refreshLines);
+      kakao.maps.event.addListener(map, 'tilesloaded', refreshLines);
+      window.addEventListener('resize', scheduleRender);
+      if (window.ResizeObserver) new window.ResizeObserver(scheduleRender).observe(document.getElementById('map'));
+      scheduleRender();
       post({ type: 'ready' });
     });
   }

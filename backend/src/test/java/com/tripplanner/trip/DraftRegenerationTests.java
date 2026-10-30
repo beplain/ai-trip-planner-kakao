@@ -36,6 +36,9 @@ class DraftRegenerationTests {
     static class FakeGenerator extends TripGenerationService {
         TripDraft result; Runnable during; boolean fail; int calls; GenerateRequest input;
         FakeGenerator() { super(null, null, null); }
+        @Override public DraftOptions generateOptions(GenerateRequest request) {
+            return new DraftOptions(List.of(new DraftOption("compact","이동 최소형","설명",generate(request))),List.of());
+        }
         @Override public TripDraft generate(GenerateRequest request) {
             calls++; input = request;
             if (during != null) during.run();
@@ -69,6 +72,55 @@ class DraftRegenerationTests {
         return new RegenerateDraftRequest(version, "바꾼 여행 이름",
                 new GenerateRequest("대전", LocalDate.of(2026,11,1), 1, "300,000원", List.of("쇼핑"), "쇼핑 위주로"));
     }
+    private TripDraft variantBundle() {
+        var base = itinerary("부산","유형 1 장소","원본 메모");
+        return new TripDraft(base.title(),base.destination(),base.startDate(),base.endDate(),base.budget(),base.styles(),base.days(),base.source(),base.warnings(),base.request(),base.travelDetails(),
+                List.of(new StoredDraftOption("compact","이동 최소형","설명",base.days(),List.of()),
+                        new StoredDraftOption("relaxed","여유형","설명",itinerary("부산","유형 2 장소","여유형 메모").days(),List.of()),
+                        new StoredDraftOption("varied","다양한 방문형","설명",itinerary("부산","유형 3 장소","다양형 메모").days(),List.of())),"compact");
+    }
+    @Test void unmetAdditionalRequestCannotBeFinalizedOrMarkedSaved() {
+        var base=itinerary("부산","다이소 부산점",null);
+        var d=new TripDraft(base.title(),base.destination(),base.startDate(),base.endDate(),base.budget(),base.styles(),base.days(),base.source(),base.warnings(),"다이소 제외");
+        var roomWithRequest=drafts.create(d,owner);
+        assertThrows(ApiException.class,()->drafts.save(roomWithRequest.id(),roomWithRequest.version(),owner));
+        assertNull(drafts.get(roomWithRequest.id(),owner).savedTripId());
+    }
+    @Test void variantsPersistAcrossEditsSwitchingRenameAndReload() {
+        var created = drafts.create(variantBundle(),owner);
+        var first = created.draft(); var old = first.days().get(0).places().get(0);
+        var editedPlace = new PlaceDraft(old.placeId(),old.name(),old.address(),old.latitude(),old.longitude(),"11:00",old.reason(),"수정한 메모",old.category(),old.verified(),old.placeUrl(),old.phone());
+        var editedDays = List.of(new DayDraft(1,first.days().get(0).date(),List.of(editedPlace)));
+        var changed = drafts.update(created.id(),new DraftRooms.Update(created.version(),DraftVariants.withDays(first,editedDays,first.warnings(),first.options(),first.selectedOption())),owner);
+        var second = drafts.switchOption(created.id(),new SwitchDraftOptionRequest(changed.version(),"relaxed"),owner);
+        assertEquals("유형 2 장소",second.draft().days().get(0).places().get(0).name());
+        assertEquals(3,second.draft().options().size());
+        var renamed = drafts.rename(created.id(),new RenameDraftRequest(second.version(),"변경한 이름"),owner);
+        var back = drafts.switchOption(created.id(),new SwitchDraftOptionRequest(renamed.version(),"compact"),owner);
+        assertEquals("수정한 메모",back.draft().days().get(0).places().get(0).note());
+        assertEquals("11:00",back.draft().days().get(0).places().get(0).visitTime());
+        assertEquals("변경한 이름",back.draft().title());
+        assertEquals(back.draft(),drafts.get(created.id(),owner).draft());
+        var encoded = documents.findById(created.id()).orElseThrow();
+        assertNotNull(encoded); assertEquals(3,drafts.get(created.id(),owner).draft().options().size());
+    }
+    @Test void variantSwitchRejectsViewersUnknownIdsAndStaleVersions() {
+        var created = drafts.create(variantBundle(),owner);
+        var token = drafts.invite(created.id(),MemberRole.VIEWER,owner).token(); drafts.join(token,viewer);
+        var before = drafts.get(created.id(),owner);
+        assertThrows(ApiException.class,() -> drafts.switchOption(created.id(),new SwitchDraftOptionRequest(before.version(),"relaxed"),viewer));
+        assertThrows(ApiException.class,() -> drafts.switchOption(created.id(),new SwitchDraftOptionRequest(before.version(),"unknown"),owner));
+        assertEquals(before,drafts.get(created.id(),owner));
+        drafts.switchOption(created.id(),new SwitchDraftOptionRequest(before.version(),"relaxed"),owner);
+        assertThrows(ApiException.class,() -> drafts.switchOption(created.id(),new SwitchDraftOptionRequest(before.version(),"varied"),owner));
+    }
+    @Test void finalSaveUsesCurrentVariantAndKeepsOtherVariantsInDraftRecord() throws Exception {
+        var created = drafts.create(variantBundle(),owner);
+        var selected = drafts.switchOption(created.id(),new SwitchDraftOptionRequest(created.version(),"varied"),owner);
+        var trip = drafts.save(created.id(),selected.version(),owner);
+        assertEquals("유형 3 장소",trip.days().get(0).places().get(0).name());
+        assertEquals(3,new ObjectMapper().readTree(documents.findById(created.id()).orElseThrow().getContent()).path("options").size());
+    }
     @Test void regenerateReplacesEntireItineraryAndPreservesParticipantsAndInvitations() {
         String token = drafts.invite(room.id(), MemberRole.VIEWER, owner).token();
         drafts.join(token, viewer);
@@ -87,6 +139,30 @@ class DraftRegenerationTests {
         assertEquals(room.id(), drafts.preview(token, viewer).draftId());
         assertEquals("대전", drafts.get(room.id(), viewer).draft().destination());
         assertEquals(tripCount, trips.count());
+    }
+    @Test void optionsDoNotReplaceOrCreateDraftsUntilSelection() {
+        long count = documents.count();
+        var before = drafts.get(room.id(),owner);
+        var options = regeneration.options(room.id(),request(before.version()),owner);
+        assertEquals(before,drafts.get(room.id(),owner));
+        assertEquals(count,documents.count()); assertEquals(1,generator.calls);
+        var selected = options.options().get(0).draft();
+        assertEquals("바꾼 여행 이름",selected.title());
+        var replaced = drafts.replaceGenerated(room.id(),before.version(),selected,owner);
+        assertEquals(selected,replaced.draft()); assertEquals(before.members(),replaced.members());
+        assertEquals(count,documents.count());
+    }
+    @Test void changedDraftDuringOptionsGenerationRejectsStaleSelection() {
+        generator.during = () -> drafts.rename(room.id(),new RenameDraftRequest(room.version(),"동행자가 바꾼 이름"),owner);
+        assertThrows(ApiException.class,() -> regeneration.options(room.id(),request(room.version()),owner));
+        assertEquals("동행자가 바꾼 이름",drafts.get(room.id(),owner).draft().title());
+        assertThrows(ApiException.class,() -> drafts.replaceGenerated(room.id(),room.version(),generator.result,owner));
+    }
+    @Test void viewersCannotGenerateNewOptions() {
+        var token = drafts.invite(room.id(),MemberRole.VIEWER,owner).token(); drafts.join(token,viewer);
+        var current = drafts.get(room.id(),owner);
+        assertThrows(ApiException.class,() -> regeneration.options(room.id(),request(current.version()),viewer));
+        assertEquals(0,generator.calls);
     }
     @Test void generationFailureLeavesOriginalDraftUntouched() {
         generator.fail = true;

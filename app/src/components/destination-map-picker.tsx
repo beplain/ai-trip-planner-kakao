@@ -1,3 +1,4 @@
+import { userMessage } from '../../services/user-message';
 import * as Location from 'expo-location';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Keyboard, Linking, Modal, Pressable, Text, TextInput, View } from 'react-native';
@@ -10,14 +11,14 @@ import { C, s } from '@/lib/styles';
 
 const JS_KEY = process.env.EXPO_PUBLIC_KAKAO_JS_KEY ?? '';
 
-function PickerContent({ initialDestination, onSelect, onClose, onPlaceSelect, placeKind = 'lodging' }: {
+function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging' }: {
   initialDestination: string; onSelect: (destination: string) => void; onClose: () => void; onPlaceSelect?: (place: LodgingPlace) => void; placeKind?: 'lodging' | 'transport';
 }) {
   const lodging = !!onPlaceSelect;
   const [selectedPlace, setSelectedPlace] = useState<LodgingPlace | null>(null);
   const [results, setResults] = useState<LodgingPlace[]>([]);
   const [ready, setReady] = useState(false);
-  const [query, setQuery] = useState(initialDestination);
+  const [query, setQuery] = useState('');
   const [selected, setSelected] = useState('');
   const [resolving, setResolving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +33,7 @@ function PickerContent({ initialDestination, onSelect, onClose, onPlaceSelect, p
 
   useEffect(() => {
     if (ready || fatal || !JS_KEY) return;
-    const timeout = setTimeout(() => { setFatal(true); setError('지도를 불러오는 시간이 초과됐어요. 인터넷 연결과 카카오 지도 설정을 확인해 주세요.'); }, 20000);
+    const timeout = setTimeout(() => { setFatal(true); setError('지도를 불러오는 시간이 초과됐어요. 인터넷 연결을 확인하고 다시 시도해 주세요.'); }, 20000);
     return () => clearTimeout(timeout);
   }, [ready, fatal]);
   useEffect(() => () => { if (pending.current) clearTimeout(pending.current); }, []);
@@ -70,7 +71,7 @@ function PickerContent({ initialDestination, onSelect, onClose, onPlaceSelect, p
       setPosition(current); waitForSelection();
       web.current?.injectJavaScript(`window.showDestinationUserLocation(${JSON.stringify({ latitude, longitude, accuracy })}); true;`);
     } catch (e) {
-      if (mounted.current) Alert.alert('위치를 확인하지 못했어요', e instanceof Error ? e.message : '잠시 후 다시 시도해 주세요.');
+      if (mounted.current) Alert.alert('위치를 확인하지 못했어요', userMessage(e instanceof Error ? e.message : null, '위치 권한과 인터넷 연결을 확인하고 다시 시도해 주세요.'));
     } finally {
       if (timeout) clearTimeout(timeout);
       locationLock.current = false;
@@ -95,11 +96,6 @@ function PickerContent({ initialDestination, onSelect, onClose, onPlaceSelect, p
     if (!message || typeof message !== 'object') return;
     if (message.type === 'ready') {
       setReady(true);
-      if (lodging && initialDestination.trim()) {
-        waitForSelection();
-        const initialQuery = JSON.stringify(initialDestination.trim()).replace(/</g, '\\u003c');
-        web.current?.injectJavaScript(`window.searchDestination(${initialQuery}); true;`);
-      }
       return;
     }
     if (message.type === 'resolving') { waitForSelection(); return; }
@@ -117,7 +113,7 @@ function PickerContent({ initialDestination, onSelect, onClose, onPlaceSelect, p
     if (message.type === 'selected' && typeof message.destination === 'string' && message.destination.trim().length <= 50) {
       setSelected(message.destination.trim()); setError(null);
     } else if (message.type === 'error' || message.type === 'selection-error') {
-      setSelected(''); setError(message.message ?? '지역을 확인하지 못했어요.');
+      setSelected(''); setError(userMessage(message.message, '지역을 확인하지 못했어요. 다른 지점을 선택해 주세요.'));
       if (message.type === 'error') setFatal(true);
     }
   }
@@ -128,7 +124,7 @@ function PickerContent({ initialDestination, onSelect, onClose, onPlaceSelect, p
         <Pressable accessibilityRole="button" onPress={onClose} style={{ padding: 10 }}><Text style={{ color: C.primary }}>닫기</Text></Pressable>
       </View>
       {!JS_KEY ? (
-        <View style={s.center}><Text style={s.emptyTitle}>카카오 지도 키가 필요해요</Text><Text style={s.empty}>카카오 지도 설정을 확인한 뒤 다시 열어 주세요.</Text></View>
+        <View style={s.center}><Text style={s.emptyTitle}>지도를 이용할 수 없어요</Text><Text style={s.empty}>잠시 후 지도를 다시 열어 주세요.</Text></View>
       ) : (
         <>
           <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 12, gap: 8 }}>

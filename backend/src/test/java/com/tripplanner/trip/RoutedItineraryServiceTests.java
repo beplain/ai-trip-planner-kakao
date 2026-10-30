@@ -12,6 +12,19 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
 class RoutedItineraryServiceTests {
+    @Test void optionsShareOneRouteBudgetAndReuseLookupResults() {
+        var b = RestClient.builder(); var server = MockRestServiceServer.bindTo(b).build();
+        server.expect(anything()).andRespond(withSuccess(
+                "{\"routes\":[{\"result_code\":0,\"summary\":{\"duration\":600}}]}",MediaType.APPLICATION_JSON));
+        var details = new TravelDetails(MovementMode.CAR,List.of(),null);
+        var input = draft(List.of(RouteTimeClientTests.p("a",129,"10:00"),RouteTimeClientTests.p("b",129.01,"12:00")),details);
+        var client = new RouteTimeClient("test","",1,b.build());
+        try {
+            var result = new RoutedItineraryService(client).adjustOptions(List.of(input,input,input));
+            assertEquals(3,result.size()); result.forEach(d -> assertDoesNotThrow(() -> TravelSchedule.validateDraft(d)));
+            server.verify();
+        } finally { client.shutdown(); }
+    }
     private TripDraft draft(List<PlaceDraft> places, TravelDetails details) {
         return new TripDraft("여행","부산",null,null,null,List.of(),List.of(new DayDraft(1,null,places)),"AI",List.of(),null,details);
     }

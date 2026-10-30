@@ -31,6 +31,11 @@ public class TripController {
         return generator.generate(req);
     }
 
+    @PostMapping("/generate-options")
+    public DraftOptions generateOptions(@Valid @RequestBody GenerateRequest req) {
+        return generator.generateOptions(req);
+    }
+
     /** 사용자가 확정한 일정 저장 */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)

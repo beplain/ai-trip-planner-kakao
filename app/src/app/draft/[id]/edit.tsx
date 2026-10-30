@@ -7,12 +7,14 @@ import { apiError, isConflict } from '../../../../services/api';
 import { draftsApi, type DraftRoom } from '../../../../services/drafts';
 import type { TravelDetails } from '../../../../services/trips';
 import { TravelDetailsInput, travelDetailsError } from '@/components/travel-details-input';
+import { combineDraftOptions } from '../../../../services/trips';
 import { BudgetInput } from '@/components/budget-input';
 import { TripPeriodInput } from '@/components/trip-period-input';
 import { DestinationInput } from '@/components/destination-input';
 import { RequireAuth } from '@/components/require-auth';
 import { ScreenHeader } from '@/components/screen-header';
 import { STYLE_OPTIONS, formatBudget, tripDayCount, tripEndDate } from '@/lib/format';
+import { destinationRegion } from '@/lib/destination-region';
 import { C, s } from '@/lib/styles';
 
 export default function EditDraftRoute() {
@@ -69,9 +71,10 @@ function EditDraftScreen() {
     if (!title.trim() || !destination.trim()) return Alert.alert('이름과 목적지를 입력해 주세요');
     if (destination.trim().length > 50) return Alert.alert('목적지는 50자 이내로 입력해 주세요');
     if (days < 1 || days > 7) return Alert.alert('캘린더에서 1~7일의 여행 기간을 선택해 주세요');
-    const detailsError = travelDetailsError(travelDetails, days);
+    if (!destinationRegion(destination)) return Alert.alert('여행할 시·도를 선택해 주세요');
+    const detailsError = travelDetailsError(travelDetails, days, startDate);
     if (detailsError) return Alert.alert('숙소·교통 정보를 확인해 주세요', detailsError);
-    Alert.alert('새 초안으로 다시 만들까요?', '수정한 조건으로 AI가 일정을 처음부터 생성합니다. 기존 장소·순서·시간·메모는 새 일정으로 교체되며, 동행자와 초대 링크는 유지됩니다. AI 모드에서는 API 사용량이 발생합니다.', [
+    Alert.alert('새 초안으로 다시 만들까요?', '수정한 조건으로 최대 3가지 초안을 새로 만들고, 초안 화면에서 유형별로 확인합니다. 기존 장소·순서·시간·메모는 새 일정으로 교체되며, 동행자와 초대 링크는 유지됩니다.', [
       { text: '취소', style: 'cancel' },
       { text: '새 초안 만들기', onPress: () => { void regenerate(); } },
     ]);
@@ -93,11 +96,12 @@ function EditDraftScreen() {
     if (!room || lock.current) return;
     lock.current = true; setBusy(true);
     try {
-      await draftsApi.regenerate(id, {
-        destination: destination.trim(), startDate: startDate || undefined,
+      const result = await draftsApi.regenerateOptions(id, {
+        destination: destinationRegion(destination)!, startDate: startDate || undefined,
         days: tripDayCount(startDate, endDate), budget: formatBudget(budget) || undefined,
         styles, travelDetails, request: request.trim() || undefined,
       }, title.trim(), room.version);
+      await draftsApi.selectRegenerated(id, combineDraftOptions(result, title), room.version);
       router.back();
     } catch (e) {
       Alert.alert(isConflict(e) ? '초안이 변경되었어요' : '다시 생성하지 못했어요', apiError(e));
@@ -107,7 +111,7 @@ function EditDraftScreen() {
 
   if (busy) return <SafeAreaView style={s.safe}>
     <ScreenHeader title={renaming ? '여행 이름 저장 중' : '초안 다시 만드는 중'} back={false} />
-    <View style={s.center}><ActivityIndicator color={C.primary} size="large" /><Text style={[s.sectionTitle, { marginTop: 18 }]}>{renaming ? '여행 이름을 저장하고 있어요' : '수정한 조건으로 새 일정을 만들고 있어요'}</Text>{!renaming && <Text style={[s.subtitle, { textAlign: 'center' }]}>완료되면 새 초안으로 교체합니다. 생성에 실패하면 기존 초안이 유지됩니다.</Text>}</View>
+    <View style={s.center}><ActivityIndicator color={C.primary} size="large" /><Text style={[s.sectionTitle, { marginTop: 18 }]}>{renaming ? '여행 이름을 저장하고 있어요' : '수정한 조건으로 새 일정을 만들고 있어요'}</Text>{!renaming && <Text style={[s.subtitle, { textAlign: 'center' }]}>완료되면 초안 화면에서 유형을 전환할 수 있습니다. 생성에 실패하면 기존 초안이 유지됩니다.</Text>}</View>
   </SafeAreaView>;
 
   if (!room) {
@@ -136,7 +140,8 @@ function EditDraftScreen() {
           ))}
         </View>
         <Text style={s.label}>추가 요청</Text>
-        <TextInput value={request} onChangeText={setRequest} style={[s.input, s.inputMulti]} multiline maxLength={200} placeholder="예: 매일 쇼핑 위주로, 많이 걷지 않게" />
+        <Text style={s.mutedSmall}>장소 제외·필수 방문·날짜별 식사와 음식 종류·방문 시간 등을 요청할 수 있어요. 여러 요청은 줄바꿈으로 구분해 주세요.</Text>
+        <TextInput value={request} onChangeText={setRequest} style={[s.input, s.inputMulti]} multiline maxLength={200} placeholder="예: 마지막 날 저녁식사는 삼겹살로 추천해줘" />
         <View style={s.infoBox}>
           <Text style={s.infoText}>여행 이름만 변경하면 기존 일정은 유지됩니다. 목적지·기간·숙소·교통·예산·스타일·추가 요청을 변경하면 모든 날짜의 장소·순서·시간·메모를 새로 생성합니다.</Text>
         </View>

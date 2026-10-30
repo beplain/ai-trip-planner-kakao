@@ -46,7 +46,25 @@ public final class TripDtos {
     public record Transport(@NotNull TransportMode mode,
                             @NotBlank @Size(max = 100) String arrivalPlace, @NotBlank String arrivalTime,
                             @NotBlank @Size(max = 100) String departurePlace, @NotBlank String departureTime,
-                            @Valid SelectedPlace arrivalLocation, @Valid SelectedPlace departureLocation) {
+                            @Valid SelectedPlace arrivalLocation, @Valid SelectedPlace departureLocation,
+                            @Valid SelectedPlace originLocation, String originTime, boolean arrivalAuto, @Valid TrainOption train,
+                            @Valid SelectedPlace returnArrivalLocation, @Valid TrainOption returnTrain, String returnArrivalTime) {
+        public Transport(TransportMode mode,String arrivalPlace,String arrivalTime,String departurePlace,String departureTime,
+                         SelectedPlace arrivalLocation,SelectedPlace departureLocation,SelectedPlace originLocation,String originTime,boolean arrivalAuto,TrainOption train,SelectedPlace returnArrivalLocation,TrainOption returnTrain) {
+            this(mode,arrivalPlace,arrivalTime,departurePlace,departureTime,arrivalLocation,departureLocation,originLocation,originTime,arrivalAuto,train,returnArrivalLocation,returnTrain,null);
+        }
+        public Transport(TransportMode mode,String arrivalPlace,String arrivalTime,String departurePlace,String departureTime,
+                         SelectedPlace arrivalLocation,SelectedPlace departureLocation,SelectedPlace originLocation,String originTime,boolean arrivalAuto,TrainOption train) {
+            this(mode,arrivalPlace,arrivalTime,departurePlace,departureTime,arrivalLocation,departureLocation,originLocation,originTime,arrivalAuto,train,null,null);
+        }
+        public Transport(TransportMode mode,String arrivalPlace,String arrivalTime,String departurePlace,String departureTime,
+                         SelectedPlace arrivalLocation,SelectedPlace departureLocation,SelectedPlace originLocation,String originTime,boolean arrivalAuto) {
+            this(mode,arrivalPlace,arrivalTime,departurePlace,departureTime,arrivalLocation,departureLocation,originLocation,originTime,arrivalAuto,null);
+        }
+        public Transport(TransportMode mode, String arrivalPlace, String arrivalTime, String departurePlace, String departureTime,
+                         SelectedPlace arrivalLocation, SelectedPlace departureLocation) {
+            this(mode, arrivalPlace, arrivalTime, departurePlace, departureTime, arrivalLocation, departureLocation, null, null, false);
+        }
         public Transport(TransportMode mode, String arrivalPlace, String arrivalTime, String departurePlace, String departureTime) {
             this(mode, arrivalPlace, arrivalTime, departurePlace, departureTime, null, null);
         }
@@ -59,6 +77,11 @@ public final class TripDtos {
             if (departureLocation != null) departurePlace = departureLocation.name();
         }
     }
+    public record TrainOption(@NotBlank @Size(max=180) String id, @NotNull LocalDate date,
+                              @NotBlank @Size(max=30) String trainNo, @NotBlank @Size(max=50) String trainType,
+                              @NotBlank @Size(max=100) String originStation, @NotBlank @Size(max=100) String arrivalStation,
+                              @NotBlank String departureTime, @NotBlank String arrivalTime) {}
+    public record TrainLookupRequest(@NotNull Transport transport,@NotNull LocalDate date) {}
     public record TravelDetails(@NotNull MovementMode movementMode,
                                 @Size(max = 6) List<@Valid Stay> stays, @Valid Transport transport) {}
 
@@ -92,8 +115,14 @@ public final class TripDtos {
             boolean verified,
             @Size(max = 300) String placeUrl,
             @Size(max = 50) String phone,
-            @Size(max = 100) String fixedEventId
+            @Size(max = 100) String fixedEventId,
+            @Size(max = 500) String categoryPath
     ) {
+        public PlaceDraft(String placeId, String name, String address, Double latitude, Double longitude,
+                          String visitTime, String reason, String note, String category, boolean verified,
+                          String placeUrl, String phone, String fixedEventId) {
+            this(placeId,name,address,latitude,longitude,visitTime,reason,note,category,verified,placeUrl,phone,fixedEventId,null);
+        }
         public PlaceDraft(String placeId, String name, String address, Double latitude, Double longitude,
                           String visitTime, String reason, String note, String category, boolean verified,
                           String placeUrl, String phone) {
@@ -122,8 +151,14 @@ public final class TripDtos {
             String source,
             List<String> warnings,
             @Size(max = 200) String request,
-            @Valid TravelDetails travelDetails
+            @Valid TravelDetails travelDetails,
+            @Size(max = 3) List<@Valid StoredDraftOption> options,
+            @Size(max = 30) String selectedOption
     ) {
+        public TripDraft(String title, String destination, LocalDate startDate, LocalDate endDate, String budget,
+                         List<String> styles, List<DayDraft> days, String source, List<String> warnings, String request, TravelDetails travelDetails) {
+            this(title, destination, startDate, endDate, budget, styles, days, source, warnings, request, travelDetails, null, null);
+        }
         public TripDraft(String title, String destination, LocalDate startDate, LocalDate endDate, String budget,
                          List<String> styles, List<DayDraft> days, String source, List<String> warnings, String request) {
             this(title, destination, startDate, endDate, budget, styles, days, source, warnings, request, null);
@@ -133,6 +168,15 @@ public final class TripDtos {
             this(title, destination, startDate, endDate, budget, styles, days, source, warnings, null);
         }
     }
+
+    public record StoredDraftOption(@NotBlank @Size(max = 30) String id, @NotBlank @Size(max = 50) String label,
+                                    @Size(max = 200) String description, @NotEmpty @Size(max = 7) List<@Valid DayDraft> days,
+                                    List<String> warnings) {}
+    public record SwitchDraftOptionRequest(@NotNull Long version, @NotBlank String optionId) {}
+
+    public record DraftOption(String id, String label, String description, TripDraft draft) {}
+    public record DraftOptions(List<DraftOption> options, List<String> warnings) {}
+    public record SelectRegeneratedRequest(@NotNull Long version, @NotNull @Valid TripDraft draft) {}
 
     public record RegenerateDraftRequest(@NotNull Long version, @NotBlank @Size(max = 100) String title,
                                          @NotNull @Valid GenerateRequest input) {}

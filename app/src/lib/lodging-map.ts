@@ -24,7 +24,7 @@ function post(m){if(window.ReactNativeWebView)window.ReactNativeWebView.postMess
 window.onerror=function(){post({type:'error',message:'장소 지도를 불러오지 못했어요. 잠시 후 다시 열어 주세요.'});};
 </script>
 <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(jsKey)}&libraries=services&autoload=false"
-onerror="post({type:'error',message:'카카오 지도 키와 SDK 도메인(http://localhost) 설정을 확인해 주세요.'})"></script>
+onerror="post({type:'error',message:'지도를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'})"></script>
 <script>
 var lodgingOnly=${JSON.stringify(kind === 'lodging')};
 var map,places,markers=[],results=[],revision=0,info,userPin;
@@ -60,7 +60,7 @@ window.showDestinationUserLocation=function(p){
  var pos=new kakao.maps.LatLng(p.latitude,p.longitude);map.setCenter(pos);map.setLevel(5);
  if(userPin)userPin.setMap(null);userPin=new kakao.maps.Marker({map:map,position:pos,title:'내 위치'});search(lodgingOnly?'숙소':'역',true);
 };
-if(typeof kakao==='undefined'){post({type:'error',message:'카카오 지도 설정을 확인해 주세요.'});}
+if(typeof kakao==='undefined'){post({type:'error',message:'지도를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'});}
 else{kakao.maps.load(function(){
  map=new kakao.maps.Map(document.getElementById('map'),{center:new kakao.maps.LatLng(36.5,127.8),level:13});
  places=new kakao.maps.services.Places();info=new kakao.maps.InfoWindow();

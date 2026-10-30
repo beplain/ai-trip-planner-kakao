@@ -29,9 +29,14 @@ final class TripRouteOptimizer {
                         if (route.get(j).fixedEventId() != null) break;
                         PlaceDraft a = route.get(i), b = route.get(j);
                         if (!known(a) || !known(b) || !fits(a, b.visitTime(), originalTimes)
-                                || !fits(b, a.visitTime(), originalTimes)) continue;
+                                || !fits(b, a.visitTime(), originalTimes)
+                                || !ExtraRequestRules.mealTimeAllowed(a,b.visitTime(),draft.request(),day.dayNumber(),draft.days().size())
+                                || !ExtraRequestRules.mealTimeAllowed(b,a.visitTime(),draft.request(),day.dayNumber(),draft.days().size())) continue;
                         PlaceDraft movedA = at(a, b.visitTime()), movedB = at(b, a.visitTime());
                         route.set(i, movedB); route.set(j, movedA);
+                        if(!ExtraRequestRules.lastRestaurantsSatisfied(draft.request(),day.dayNumber(),draft.days().size(),route)) {
+                            route.set(i,a); route.set(j,b); continue;
+                        }
                         double next = distance(route, draft.travelDetails(), day.dayNumber(), cost);
                         if (next + 1 < best) {
                             originalTimes.put(movedA, originalTimes.get(a));
@@ -52,16 +57,16 @@ final class TripRouteOptimizer {
         if (slot == null || !original.containsKey(p)) return false;
         int time = TravelSchedule.minute(slot);
         String text = Objects.toString(p.name(), "") + Objects.toString(p.reason(), "") + Objects.toString(p.note(), "");
-        if (text.matches("(?s).*(저녁|디너).*" ) && time < 17 * 60) return false;
-        if (text.matches("(?s).*(점심|런치).*" ) && (time < 11 * 60 || time > 14 * 60)) return false;
-        if (text.matches("(?s).*(아침|조식).*" ) && time > 10 * 60 + 30) return false;
+        if (!text.contains("마지막 식당 식사 요청:") && text.matches("(?s).*(저녁|디너).*" ) && time < 17 * 60) return false;
+        if (!text.contains("마지막 식당 식사 요청:") && text.matches("(?s).*(점심|런치).*" ) && (time < 11 * 60 || time > 14 * 60)) return false;
+        if (!text.contains("마지막 식당 식사 요청:") && text.matches("(?s).*(아침|조식).*" ) && time > 10 * 60 + 30) return false;
         boolean food = Set.of("식당", "카페").contains(Objects.toString(p.category(), ""));
         return !(text.contains("야경") || (!food && original.get(p) >= 18 * 60)) || time >= 18 * 60;
     }
 
     static PlaceDraft at(PlaceDraft p, String time) {
         return new PlaceDraft(p.placeId(), p.name(), p.address(), p.latitude(), p.longitude(), time,
-                p.reason(), p.note(), p.category(), p.verified(), p.placeUrl(), p.phone(), p.fixedEventId());
+                p.reason(), p.note(), p.category(), p.verified(), p.placeUrl(), p.phone(), p.fixedEventId(), p.categoryPath());
     }
 
     static boolean known(PlaceDraft p) {

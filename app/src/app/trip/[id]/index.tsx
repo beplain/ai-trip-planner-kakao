@@ -1,3 +1,4 @@
+import { TransportDeparture, TransportReturnArrival } from '@/components/transport-departure';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, AppState, Pressable, RefreshControl, ScrollView, Share, Text, View } from 'react-native';
@@ -87,7 +88,7 @@ function TripDetailScreen() {
     busyRef.current = true; setBusy(true); setNotice(null);
     try {
       apply(await action(expectedVersion ?? versionRef.current ?? trip.version));
-      setNotice('변경 내용을 DB에 저장했어요.');
+      setNotice('변경 내용을 저장했어요.');
     } catch (e) {
       if (isConflict(e)) {
         Alert.alert('일정이 변경되었어요', apiError(e));
@@ -137,7 +138,7 @@ function TripDetailScreen() {
   async function onRefresh() {
     if (busyRef.current || refreshingRef.current || dragScroll.isDragging() || memoRef.current) return;
     refreshingRef.current = true; setRefreshing(true);
-    try { if (await load()) setNotice('DB의 최신 일정으로 동기화했어요.'); }
+    try { if (await load()) setNotice('최신 일정으로 업데이트했어요.'); }
     finally { refreshingRef.current = false; setRefreshing(false); }
   }
 
@@ -200,9 +201,11 @@ function TripDetailScreen() {
           return (
             <View key={day.id ?? day.dayNumber}>
               <Text style={[s.dayLabel, { color }]}>DAY {day.dayNumber}{day.date ? ` · ${shortDate(day.date)}` : ''}</Text>
+              <TransportDeparture value={trip.travelDetails} dayNumber={day.dayNumber} color={color} />
               <DraggablePlaces places={day.places} color={color} editable={canEdit} busy={busy || refreshing} scroll={dragScroll}
                 onReorder={(from, to) => reorder(dayIdx, from, to)} onDelete={removePlace}
                 onEditMemo={(p) => { memoRef.current = true; memoVersion.current = trip.version; setMemo(p); }} />
+              <TransportReturnArrival value={trip.travelDetails} dayNumber={day.dayNumber} dayCount={trip.days.length} color={color} />
             </View>
           );
         })}

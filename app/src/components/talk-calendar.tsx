@@ -1,3 +1,4 @@
+import { userMessage } from '../../services/user-message';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Pressable, Text, View } from 'react-native';
 
@@ -49,7 +50,7 @@ export function TalkCalendarPanel({ tripId, version }: { tripId: number; version
   return (
     <View style={s.infoBox}>
       <Text style={s.infoTitle}>내 톡캘린더</Text>
-      {!result && !error ? <ActivityIndicator /> : <Text accessibilityLiveRegion="polite" style={s.infoText}>{error || result?.message}</Text>}
+      {!result && !error ? <ActivityIndicator /> : <Text accessibilityLiveRegion="polite" style={s.infoText}>{error || userMessage(result?.message)}</Text>}
       {canRegister && <Pressable accessibilityRole="button" disabled={busy} onPress={() => { void register(result.status === 'NOT_CONNECTED'); }} style={[s.outlineButton, busy && s.disabled]}><Text style={s.outlineText}>{busy ? '등록 확인 중…' : result.status === 'NOT_CONNECTED' ? '카카오 연결하고 등록' : '톡캘린더에 등록'}</Text></Pressable>}
       {result?.status === 'FAILED' && <Pressable accessibilityRole="button" disabled={busy} onPress={() => { void register(true); }} style={s.outlineButton}><Text style={s.outlineText}>권한 다시 연결하고 등록</Text></Pressable>}
       {(error || result?.status === 'PENDING' || result?.status === 'UNKNOWN') && <Pressable style={s.outlineButton} disabled={busy} onPress={() => { tripsApi.calendarStatus(tripId).then((r) => { setResult(r); setError(''); }).catch((e) => setError(apiError(e))); }}><Text style={s.outlineText}>상태 다시 확인</Text></Pressable>}
