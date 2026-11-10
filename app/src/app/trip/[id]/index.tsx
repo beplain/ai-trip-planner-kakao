@@ -1,3 +1,4 @@
+import { ItineraryDay } from '@/components/itinerary-day';
 import { TransportDeparture, TransportReturnArrival } from '@/components/transport-departure';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
@@ -14,9 +15,8 @@ import { useDragScroll } from '@/hooks/use-drag-scroll';
 import { reorderItems } from '@/lib/reorder';
 import { RequireAuth } from '@/components/require-auth';
 import { ScreenHeader } from '@/components/screen-header';
-import { TalkCalendarPanel } from '@/components/talk-calendar';
 import { useAuth } from '@/lib/auth-context';
-import { ROLE_LABEL, dateRange, formatBudget, shareText, shortDate } from '@/lib/format';
+import { styleLabel, ROLE_LABEL, dateRange, formatBudget, shareText, shortDate } from '@/lib/format';
 import { C, DAY_COLORS, s } from '@/lib/styles';
 
 const POLL_MS = 10_000;
@@ -172,7 +172,7 @@ function TripDetailScreen() {
             {[trip.destination, `${trip.dayCount}일`, dateRange(trip.startDate, trip.endDate), formatBudget(trip.budget)].filter(Boolean).join(' · ')}
           </Text>
           <Text style={s.detailTitle}>{trip.title}</Text>
-          <Text style={s.detailMeta}>여행 스타일: {trip.styles.length ? trip.styles.join(' · ') : '미선택'} · 내 이름: {user?.name ?? '사용자'}</Text>
+          <Text style={s.detailMeta}>여행 스타일: {trip.styles.length ? trip.styles.map(styleLabel).join(' · ') : '미선택'} · 내 이름: {user?.name ?? '사용자'}</Text>
         </View>
 
         {notice && (
@@ -180,8 +180,6 @@ function TripDetailScreen() {
             <Text style={s.infoText}>{notice}</Text>
           </Pressable>
         )}
-
-        <TalkCalendarPanel tripId={trip.id} version={trip.version} />
         <TravelDetailsSummary value={trip.travelDetails} />
         <TripActions disabled={busy || refreshing || dragging}
           onMap={() => router.push(`/trip/${trip.id}/map`)}
@@ -199,14 +197,15 @@ function TripDetailScreen() {
         {trip.days.map((day, dayIdx) => {
           const color = DAY_COLORS[dayIdx % DAY_COLORS.length];
           return (
-            <View key={day.id ?? day.dayNumber}>
-              <Text style={[s.dayLabel, { color }]}>DAY {day.dayNumber}{day.date ? ` · ${shortDate(day.date)}` : ''}</Text>
+            <ItineraryDay key={day.id ?? day.dayNumber}
+              title={`DAY ${day.dayNumber}${day.date ? ` · ${shortDate(day.date)}` : ''}`}
+              color={color} disabled={dragging || busy || refreshing}>
               <TransportDeparture value={trip.travelDetails} dayNumber={day.dayNumber} color={color} />
-              <DraggablePlaces places={day.places} color={color} editable={canEdit} busy={busy || refreshing} scroll={dragScroll}
+              <DraggablePlaces visitDate={day.date} places={day.places} color={color} editable={canEdit} busy={busy || refreshing} scroll={dragScroll}
                 onReorder={(from, to) => reorder(dayIdx, from, to)} onDelete={removePlace}
                 onEditMemo={(p) => { memoRef.current = true; memoVersion.current = trip.version; setMemo(p); }} />
               <TransportReturnArrival value={trip.travelDetails} dayNumber={day.dayNumber} dayCount={trip.days.length} color={color} />
-            </View>
+            </ItineraryDay>
           );
         })}
 

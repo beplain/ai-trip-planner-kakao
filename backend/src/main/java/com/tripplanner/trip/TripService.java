@@ -13,6 +13,8 @@ import java.util.*;
 @Service
 @Transactional
 public class TripService {
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private GoogleHoursScheduler editHours;
     private final TripRepository trips;
     private final TripMemberRepository members;
     private final TripInviteRepository invites;
@@ -129,7 +131,11 @@ public class TripService {
                 var old = previous.get(i); var next = byId.get(ids.get(i));
                 if ((old.getFixedEventId() != null || next.getFixedEventId() != null) && !old.getId().equals(next.getId()))
                     throw ApiException.badRequest("고정 일정의 위치를 변경할 수 없습니다.");
-                if (next.getFixedEventId() == null) next.updateMemo(times.get(i), next.getNote());
+                if (next.getFixedEventId() == null) {
+                    boolean changed=!Objects.equals(next.getVisitTime(),times.get(i));
+                    next.updateMemo(times.get(i), next.getNote());
+                    if(changed) recheckHours(next);
+                }
             }
         }
         for (int i = 0; i < ids.size(); i++) byId.get(ids.get(i)).setOrderIndex(i);
@@ -145,7 +151,9 @@ public class TripService {
         checkVersion(t, req.version());
         ItineraryPlace p = findPlace(t, placeId);
         if (p.getFixedEventId() != null) throw ApiException.badRequest("고정 항목은 초안의 여행 정보 수정에서 변경해 주세요.");
+        boolean timeChanged=!Objects.equals(p.getVisitTime(),blankToNull(req.visitTime()));
         p.updateMemo(blankToNull(req.visitTime()), blankToNull(req.note()));
+        if(timeChanged) recheckHours(p);
         validateSchedule(t);
         t.touch();
         trips.flush();
@@ -220,14 +228,22 @@ public class TripService {
                 blankToNull(p.category()), p.verified() && hasCoords && p.placeId() != null,
                 safeUrl(p.placeUrl()), blankToNull(p.phone()));
         entity.setFixedEventId(p.fixedEventId());
+        entity.setBusinessHours(p.businessHours());
         return entity;
+    }
+
+    private void recheckHours(ItineraryPlace p) {
+        if(editHours==null)return;
+        var place=new PlaceDraft(p.getPlaceId(),p.getName(),p.getAddress(),p.getLatitude(),p.getLongitude(),
+            p.getVisitTime(),p.getReason(),p.getNote(),p.getCategory(),p.isVerified(),p.getPlaceUrl(),p.getPhone());
+        p.setBusinessHours(editHours.session().checkEdited(place,p.getTripDay().getDate()).businessHours());
     }
 
     private static void validateSchedule(Trip t) {
         var days = t.getDays().stream().map(d -> new DayDraft(d.getDayNumber(), d.getDate(),
                 d.getPlaces().stream().sorted(Comparator.comparingInt(ItineraryPlace::getOrderIndex))
                  .map(p -> new PlaceDraft(p.getPlaceId(), p.getName(), p.getAddress(), p.getLatitude(), p.getLongitude(),
-                         p.getVisitTime(), p.getReason(), p.getNote(), p.getCategory(), p.isVerified(), p.getPlaceUrl(), p.getPhone(), p.getFixedEventId())).toList())).toList();
+                         p.getVisitTime(), p.getReason(), p.getNote(), p.getCategory(), p.isVerified(), p.getPlaceUrl(), p.getPhone(), p.getFixedEventId()).withBusinessHours(p.getBusinessHours())).toList())).toList();
         TravelSchedule.validateDraft(new TripDraft(t.getTitle(), t.getDestination(), t.getStartDate(), t.getEndDate(),
                 t.getBudget(), t.getStyles(), days, null, List.of(), null, t.getTravelDetails()));
     }

@@ -10,14 +10,6 @@ import java.time.Duration;
 @Configuration
 public class HttpClientConfig {
     @Bean
-    RestClient calendarRestClient() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(Duration.ofSeconds(3));
-        factory.setReadTimeout(Duration.ofSeconds(8));
-        return RestClient.builder().requestFactory(factory).build();
-    }
-
-    @Bean
     RestClient placesRestClient() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(3));

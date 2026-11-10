@@ -11,13 +11,14 @@ export type Stay = {
 export type SelectedPlace = { placeId: string; name: string; address: string; latitude: number; longitude: number; placeUrl: string };
 export type TrainOption = { id: string; date: string; trainNo: string; trainType: string; originStation: string; arrivalStation: string; departureTime: string; arrivalTime: string };
 export type TravelDetails = {
-  movementMode: 'CAR' | 'PUBLIC_TRANSIT'; stays: Stay[];
-  transport?: { returnArrivalTime?: string; returnArrivalLocation?: SelectedPlace; returnTrain?: TrainOption; train?: TrainOption; originLocation?: SelectedPlace; originTime?: string; arrivalAuto?: boolean; arrivalLocation?: SelectedPlace; departureLocation?: SelectedPlace; mode: 'KTX' | 'PLANE' | 'BUS' | 'CAR'; arrivalPlace: string; arrivalTime: string; departurePlace: string; departureTime: string };
+  movementMode: 'CAR' | 'PUBLIC_TRANSIT' | 'WALK'; stays: Stay[];
+  transport?: { alightingStation?: SelectedPlace; returnAlightingStation?: SelectedPlace; boardingStation?: SelectedPlace; returnBoardingStation?: SelectedPlace; returnArrivalAuto?: boolean; returnArrivalTime?: string; returnArrivalLocation?: SelectedPlace; returnTrain?: TrainOption; train?: TrainOption; originLocation?: SelectedPlace; originTime?: string; arrivalAuto?: boolean; arrivalLocation?: SelectedPlace; departureLocation?: SelectedPlace; mode: 'KTX' | 'PLANE' | 'BUS' | 'CAR'; arrivalPlace: string; arrivalTime: string; departurePlace: string; departureTime: string };
 };
 
 export type Role = 'OWNER' | 'EDITOR' | 'VIEWER';
 
 export type Place = {
+  businessHours?: { hoursText?: string; closedText?: string; status?: string; detail?: string; contentId?: string; checkedAt?: string; visitDate?: string; checkedVisitTime?: string; basis?: string };
   categoryPath?: string;
   fixedEventId?: string;
   id?: number; // 저장된 일정의 장소 id (초안에는 없음)
@@ -42,7 +43,6 @@ export type Member = { userId: number; name: string; email?: string; role: Role 
 
 export type Trip = {
   travelDetails?: TravelDetails;
-  calendar?: CalendarResult;
   id: number;
   title: string;
   destination: string;
@@ -56,12 +56,6 @@ export type Trip = {
   myRole: Role;
   days: Day[];
   members: Member[];
-};
-
-export type CalendarResult = {
-  status: 'NOT_CONNECTED' | 'NOT_REGISTERED' | 'NO_DATE' | 'PENDING' | 'CREATED' | 'FAILED' | 'UNKNOWN';
-  message: string;
-  eventId?: string;
 };
 
 export type TripSummary = {
@@ -147,8 +141,14 @@ const t = (id: number | string) => `/api/trips/${encodeURIComponent(String(id))}
 export type RequestCheck = { request: string; status: 'APPLIED' | 'UNMET' | 'UNVERIFIABLE'; detail: string };
 
 export const tripsApi = {
+  async stationCandidates(origin: SelectedPlace, destination?: SelectedPlace) {
+    return (await api.post<SelectedPlace[]>('/api/trips/transport/station-candidates', { origin, destination }, { timeout: 15000 })).data;
+  },
   async requestChecks(draft: TripDraft) {
     return (await api.post<RequestCheck[]>('/api/trips/requests/check', draft)).data;
+  },
+  async recommendTrainStation(transport: NonNullable<TravelDetails['transport']>, date: string) {
+    return (await api.post<{ station: SelectedPlace; trains: TrainOption[]; distanceMeters: number }>('/api/trips/transport/station-recommendation', { transport, date }, { timeout: 45000 })).data;
   },
   async trainOptions(transport: NonNullable<TravelDetails['transport']>, date: string) {
     return (await api.post<TrainOption[]>('/api/trips/transport/trains', { transport, date }, { timeout: 45000 })).data;
@@ -165,12 +165,6 @@ export const tripsApi = {
   },
   async create(draft: TripDraft) {
     return (await api.post<Trip>('/api/trips', draft, { timeout: 45000 })).data;
-  },
-  async calendarStatus(id: number) {
-    return (await api.get<CalendarResult>(`${t(id)}/calendar`)).data;
-  },
-  async registerCalendar(id: number) {
-    return (await api.post<CalendarResult>(`${t(id)}/calendar`, undefined, { timeout: 45000 })).data;
   },
   async list() {
     return (await api.get<TripSummary[]>('/api/trips')).data;

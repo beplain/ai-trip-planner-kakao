@@ -45,7 +45,7 @@ public class AuthController {
     }
 
     @GetMapping("/kakao/start")
-    public ResponseEntity<Void> kakaoStart(@RequestParam String redirect, @RequestParam(defaultValue = "false") boolean calendar, HttpServletRequest request) {
+    public ResponseEntity<Void> kakaoStart(@RequestParam String redirect, HttpServletRequest request) {
         if (!props.kakao().enabled()) {
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "KAKAO_NOT_CONFIGURED",
                     "서버에 KAKAO_REST_API_KEY가 설정되지 않았습니다.");
@@ -54,7 +54,7 @@ public class AuthController {
             throw ApiException.badRequest("허용되지 않은 앱 주소입니다: " + redirect);
         }
         String state = store.newState(redirect);
-        return found(kakao.authorizeUrl(callbackUrl(request), state, calendar));
+        return found(kakao.authorizeUrl(callbackUrl(request), state));
     }
 
     @GetMapping("/kakao/callback")

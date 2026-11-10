@@ -45,6 +45,7 @@ public final class ItineraryRules {
         if (itinerary.days().size() != request.days()) errors.add("일차 수는 정확히 " + request.days() + "일이어야 함");
         Set<Integer> dayNumbers = new HashSet<>();
         Set<String> names = new HashSet<>();
+        Set<String> covered = new HashSet<>();
         for (AiDay day : itinerary.days()) {
             if (day == null) { errors.add("빈 일차"); continue; }
             int n = day.dayNumber();
@@ -54,7 +55,6 @@ public final class ItineraryRules {
                 errors.add(n + "일차 일반 장소 수는 " + minimum + "~10개여야 함");
                 if (day.places() == null) continue;
             }
-            Set<String> covered = new HashSet<>();
             int previous = -1;
             for (AiPlace p : day.places()) {
                 if (p == null || p.name() == null || p.name().isBlank()) { errors.add(n + "일차 장소 이름 없음"); continue; }
@@ -72,8 +72,6 @@ public final class ItineraryRules {
                 Set<String> matching = stylesFor(p);
                 covered.addAll(matching);
             }
-            Set<String> missing = new LinkedHashSet<>(requested); missing.removeAll(covered);
-            if (!missing.isEmpty()) errors.add(n + "일차에 빠진 스타일: " + String.join(", ", missing));
             if (request.travelDetails() != null) {
                 int evening = com.tripplanner.trip.TravelSchedule.eveningStart(n, request.days(), request.travelDetails(),
                         com.tripplanner.trip.TravelSchedule.events(request.travelDetails(), request.days()));
@@ -81,6 +79,8 @@ public final class ItineraryRules {
                     errors.add("첫날 체크인 후 최소 20시까지 이어지는 저녁 장소 필요");
             }
         }
+        Set<String> missing = new LinkedHashSet<>(requested); missing.removeAll(covered);
+        if (!missing.isEmpty()) errors.add("여행 전체에 빠진 스타일: " + String.join(", ", missing));
         return errors.stream().limit(20).toList();
     }
     private static int time(String value) {

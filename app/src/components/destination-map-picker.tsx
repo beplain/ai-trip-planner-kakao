@@ -1,7 +1,8 @@
+import { mapDestinationRegion } from '@/lib/destination-region';
 import { userMessage } from '../../services/user-message';
 import * as Location from 'expo-location';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Keyboard, Linking, Modal, Pressable, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Keyboard, Linking, Modal, Pressable, Text, TextInput, View, type TextInputInstance } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
@@ -27,6 +28,8 @@ function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging'
   const [position, setPosition] = useState<Location.LocationObject | null>(null);
   const locationLock = useRef(false);
   const mounted = useRef(true);
+  const searchInput = useRef<TextInputInstance>(null);
+  const suppressKeyboard = useRef(true);
   const web = useRef<WebView<Record<never, never>>>(null);
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
   const html = useMemo(() => lodging ? buildLodgingMapHtml(JS_KEY, placeKind) : buildDestinationMapHtml(JS_KEY), [lodging, placeKind]);
@@ -42,9 +45,22 @@ function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging'
     return () => { mounted.current = false; };
   }, []);
 
+  useEffect(() => {
+    const subscription = Keyboard.addListener('keyboardDidShow', () => {
+      if (suppressKeyboard.current) { searchInput.current?.blur(); Keyboard.dismiss(); }
+    });
+    return () => subscription.remove();
+  }, []);
+
+  function dismissSearchKeyboard() {
+    suppressKeyboard.current = true;
+    searchInput.current?.blur();
+    Keyboard.dismiss();
+  }
+
   async function locate() {
     if (!ready || fatal || locationLock.current) return;
-    Keyboard.dismiss(); locationLock.current = true; setLocating(true);
+    dismissSearchKeyboard(); locationLock.current = true; setLocating(true);
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const enabled = await Location.hasServicesEnabledAsync();
@@ -86,7 +102,7 @@ function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging'
   }
   function search() {
     if (!ready || fatal || !query.trim()) return;
-    Keyboard.dismiss(); waitForSelection();
+    dismissSearchKeyboard(); waitForSelection();
     const argument = JSON.stringify(query.trim()).replace(/</g, '\\u003c');
     web.current?.injectJavaScript(`window.searchDestination(${argument}); true;`);
   }
@@ -102,16 +118,17 @@ function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging'
     if (pending.current) clearTimeout(pending.current);
     setResolving(false);
     if (lodging && message.type === 'lodging-results') {
-      setResults((Array.isArray(message.places) ? message.places.slice(0, 15) : []).map(parseLodgingPlace).filter((p): p is LodgingPlace => p !== null));
+      setResults((Array.isArray(message.places) ? message.places.slice(0, 15) : []).map(p => parseLodgingPlace(p, placeKind === 'transport')).filter((p): p is LodgingPlace => p !== null));
       setError(null); return;
     }
     if (lodging && message.type === 'lodging-selected') {
-      const place = parseLodgingPlace(message.place);
-      if (place) { setSelectedPlace(place); setError(null); }
+      const place = parseLodgingPlace(message.place, placeKind === 'transport');
+      if (place) { dismissSearchKeyboard(); setSelectedPlace(place); setError(null); }
       return;
     }
     if (message.type === 'selected' && typeof message.destination === 'string' && message.destination.trim().length <= 50) {
-      setSelected(message.destination.trim()); setError(null);
+      const destination = mapDestinationRegion(message.destination);
+      setSelected(destination ?? ''); setError(destination ? null : '이 지점의 지역명을 확인하지 못했어요. 다른 지점을 선택해 주세요.');
     } else if (message.type === 'error' || message.type === 'selection-error') {
       setSelected(''); setError(userMessage(message.message, '지역을 확인하지 못했어요. 다른 지점을 선택해 주세요.'));
       if (message.type === 'error') setFatal(true);
@@ -121,18 +138,31 @@ function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging'
     <SafeAreaView style={s.safe}>
       <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12 }}>
         <Text style={[s.sectionTitle, { flex: 1 }]}>{lodging ? placeKind === 'transport' ? '도착·출발 장소 선택' : '카카오맵에서 숙소 선택' : '지도에서 목적지 선택'}</Text>
-        <Pressable accessibilityRole="button" onPress={onClose} style={{ padding: 10 }}><Text style={{ color: C.primary }}>닫기</Text></Pressable>
+        <Pressable accessibilityRole="button" onPress={() => { dismissSearchKeyboard(); onClose(); }} style={{ padding: 10 }}><Text style={{ color: C.primary }}>닫기</Text></Pressable>
       </View>
       {!JS_KEY ? (
         <View style={s.center}><Text style={s.emptyTitle}>지도를 이용할 수 없어요</Text><Text style={s.empty}>잠시 후 지도를 다시 열어 주세요.</Text></View>
       ) : (
         <>
           <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 12, gap: 8 }}>
-            <TextInput accessibilityLabel="지도에서 지역 또는 장소 검색" value={query} onChangeText={setQuery} placeholder={lodging ? placeKind === "transport" ? "예: 부산역, 김해공항" : "예: 부산 해운대 호텔" : "예: 부산 해운대"} maxLength={lodging ? 100 : 50} returnKeyType="search" onSubmitEditing={search} style={[s.input, { flex: 1 }]} />
+            <View style={{ flex: 1 }}>
+              <TextInput ref={searchInput}
+                onTouchStart={() => { suppressKeyboard.current = false; }}
+                onAccessibilityTap={() => { suppressKeyboard.current = false; searchInput.current?.focus(); }}
+                onFocus={() => { if (suppressKeyboard.current) dismissSearchKeyboard(); }}
+                accessibilityLabel="지도에서 지역 또는 장소 검색" value={query} onChangeText={setQuery} placeholder={lodging ? placeKind === "transport" ? "예: 서울역, 광화문, 건물 이름" : "예: 부산 해운대 호텔" : "예: 부산 해운대"} maxLength={lodging ? 100 : 50} returnKeyType="search" onSubmitEditing={search} style={[s.input, { paddingRight: 44 }]} />
+              {!!query && <Pressable accessibilityRole="button" accessibilityLabel="지도 검색어 지우기"
+                onPress={() => setQuery('')}
+                style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 44, alignItems: 'center', justifyContent: 'center' }}>
+                <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#E8EBF0', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ color: '#657087', fontSize: 16, lineHeight: 20 }}>×</Text>
+                </View>
+              </Pressable>}
+            </View>
             <Pressable accessibilityRole="button" disabled={!ready || fatal || !query.trim()} onPress={search} style={[s.smallButton, { justifyContent: 'center', paddingHorizontal: 16 }, (!ready || fatal) && s.disabled]}><Text style={s.smallButtonText}>검색</Text></Pressable>
           </View>
           <View style={{ flex: 1 }}>
-            <WebView<Record<never, never>> ref={web} source={{ html, baseUrl: 'http://localhost' }} originWhitelist={['*']} javaScriptEnabled domStorageEnabled onMessage={onMessage}
+            <WebView<Record<never, never>> ref={web} source={{ html, baseUrl: 'http://localhost' }} originWhitelist={['*']} javaScriptEnabled domStorageEnabled keyboardDisplayRequiresUserAction onTouchStart={dismissSearchKeyboard} onMessage={onMessage}
               onError={() => { setFatal(true); setError('지도를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.'); }} style={{ flex: 1 }} />
             {!ready && !fatal && <View pointerEvents="none" style={{ position: 'absolute', top: 24, alignSelf: 'center' }}><ActivityIndicator color={C.primary} /><Text style={s.mutedSmall}>지도 불러오는 중…</Text></View>}
             <Pressable accessibilityRole="button" accessibilityLabel="GPS로 현재 위치 표시" disabled={!ready || fatal || locating}
@@ -141,19 +171,21 @@ function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging'
               <Text style={s.smallButtonText}>{locating ? '위치 확인 중…' : '◎ 내 위치'}</Text>
             </Pressable>
           </View>
-          {lodging && results.length > 0 && <FlatList style={{ flexGrow: 0, maxHeight: 190 }} keyboardShouldPersistTaps="handled"
+          {lodging && results.length > 0 && <FlatList style={{ flexGrow: 0, maxHeight: 190 }} keyboardShouldPersistTaps="always" keyboardDismissMode="on-drag"
             data={results} keyExtractor={(place) => place.placeId} renderItem={({ item }) => <Pressable accessibilityRole="button"
               accessibilityState={{ selected: selectedPlace?.placeId === item.placeId }}
-              onPress={() => { Keyboard.dismiss(); setSelectedPlace(item); web.current?.injectJavaScript(`window.selectLodging(${JSON.stringify(item.placeId)}); true;`); }}
+              onPressIn={dismissSearchKeyboard}
+              onPress={() => { dismissSearchKeyboard(); setSelectedPlace(item); web.current?.injectJavaScript(`window.selectLodging(${JSON.stringify(item.placeId)}); true;`); }}
               style={{ paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 1, borderColor: '#e3e7ef', backgroundColor: selectedPlace?.placeId === item.placeId ? '#edf2ff' : '#fff' }}>
               <Text style={s.sectionTitleSmall}>{item.name}</Text><Text style={s.mutedSmall}>{item.address}</Text>
             </Pressable>} />}
           <View style={{ backgroundColor: '#fff', padding: 20, gap: 10 }}>
-            <Text style={s.mutedSmall}>{lodging ? '장소를 검색한 뒤 목록이나 지도 마커를 누르세요.' : '지도를 확대하고 원하는 지점을 누르세요. 선택한 지점이 속한 지역으로 여행을 계획합니다.'}</Text>
+            <Text style={s.mutedSmall}>{lodging ? placeKind === 'transport' ? '지도를 누르면 50m 안의 실제 장소가 표시돼요. 목록이나 마커에서 원하는 장소를 선택해 주세요.' : '장소를 검색한 뒤 목록이나 지도 마커를 누르세요.' : '지도를 확대하고 원하는 지점을 누르세요. 선택한 지점이 속한 지역으로 여행을 계획합니다.'}</Text>
             {position && <Text style={s.mutedSmall}>내 위치 확인: {new Date(position.timestamp).toLocaleTimeString()}{position.coords.accuracy != null ? ` · 정확도 약 ${Math.round(position.coords.accuracy)}m` : ''} · 버튼을 눌러 갱신</Text>}
             {resolving && <ActivityIndicator color={C.primary} />}
-            <Text accessibilityLiveRegion="polite" style={error ? s.warnText : s.sectionTitleSmall}>{error ?? (resolving ? '지역 확인 중…' : (lodging ? selectedPlace?.name || (placeKind === 'transport' ? '도착·출발 장소를 선택해 주세요' : '숙소를 선택해 주세요') : selected || '아직 선택한 지역이 없어요'))}</Text>
-            <Pressable accessibilityRole="button" disabled={!(lodging ? selectedPlace : selected) || resolving || fatal} onPress={() => { if (lodging && selectedPlace) onPlaceSelect?.(selectedPlace); else if (!lodging) onSelect(selected); }} style={[s.primary, (!(lodging ? selectedPlace : selected) || resolving || fatal) && s.disabled]}><Text style={s.primaryText}>{lodging ? placeKind === 'transport' ? '이 장소 선택' : '이 숙소 선택' : '이 지역을 목적지로 선택'}</Text></Pressable>
+            <Text accessibilityLiveRegion="polite" style={error ? s.warnText : s.sectionTitleSmall}>{error ?? (resolving ? lodging ? '장소 확인 중…' : '지역 확인 중…' : (lodging ? selectedPlace?.name || (placeKind === 'transport' ? '도착·출발 장소를 선택해 주세요' : '숙소를 선택해 주세요') : selected || '아직 선택한 지역이 없어요'))}</Text>
+            {lodging && selectedPlace && <Text style={s.mutedSmall}>{selectedPlace.address}</Text>}
+            <Pressable accessibilityRole="button" disabled={!(lodging ? selectedPlace : selected) || resolving || fatal} onPress={() => { dismissSearchKeyboard(); if (lodging && selectedPlace) onPlaceSelect?.(selectedPlace); else if (!lodging) onSelect(selected); }} style={[s.primary, (!(lodging ? selectedPlace : selected) || resolving || fatal) && s.disabled]}><Text style={s.primaryText}>{lodging ? placeKind === 'transport' ? '이 장소 선택' : '이 숙소 선택' : '이 지역을 목적지로 선택'}</Text></Pressable>
           </View>
         </>
       )}

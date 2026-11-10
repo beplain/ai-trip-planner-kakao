@@ -13,7 +13,7 @@ import { TripPeriodInput } from '@/components/trip-period-input';
 import { DestinationInput } from '@/components/destination-input';
 import { RequireAuth } from '@/components/require-auth';
 import { ScreenHeader } from '@/components/screen-header';
-import { STYLE_OPTIONS, formatBudget, tripDayCount, tripEndDate } from '@/lib/format';
+import { styleLabel, STYLE_OPTIONS, formatBudget, tripDayCount, tripEndDate } from '@/lib/format';
 import { destinationRegion } from '@/lib/destination-region';
 import { C, s } from '@/lib/styles';
 
@@ -71,7 +71,7 @@ function EditDraftScreen() {
     if (!title.trim() || !destination.trim()) return Alert.alert('이름과 목적지를 입력해 주세요');
     if (destination.trim().length > 50) return Alert.alert('목적지는 50자 이내로 입력해 주세요');
     if (days < 1 || days > 7) return Alert.alert('캘린더에서 1~7일의 여행 기간을 선택해 주세요');
-    if (!destinationRegion(destination)) return Alert.alert('여행할 시·도를 선택해 주세요');
+    if (!destinationRegion(destination)) return Alert.alert('여행할 지역을 선택해 주세요');
     const detailsError = travelDetailsError(travelDetails, days, startDate);
     if (detailsError) return Alert.alert('숙소·교통 정보를 확인해 주세요', detailsError);
     Alert.alert('새 초안으로 다시 만들까요?', '수정한 조건으로 최대 3가지 초안을 새로 만들고, 초안 화면에서 유형별로 확인합니다. 기존 장소·순서·시간·메모는 새 일정으로 교체되며, 동행자와 초대 링크는 유지됩니다.', [
@@ -135,7 +135,7 @@ function EditDraftScreen() {
         <View style={s.chips}>
           {STYLE_OPTIONS.map((item) => (
             <Pressable key={item} onPress={() => setStyles((c) => (c.includes(item) ? c.filter((x) => x !== item) : [...c, item]))} style={[s.chip, styles.includes(item) && s.chipActive]}>
-              <Text style={[s.chipText, styles.includes(item) && s.chipTextActive]}>{item}</Text>
+              <Text style={[s.chipText, styles.includes(item) && s.chipTextActive]}>{styleLabel(item)}</Text>
             </Pressable>
           ))}
         </View>

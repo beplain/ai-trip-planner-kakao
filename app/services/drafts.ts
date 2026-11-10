@@ -5,6 +5,8 @@ export type DraftRoom = {
   id: string; version: number; draft: TripDraft; members: Member[]; myRole: Role;
   savedTripId?: number; expiresAt?: string;
 };
+export type DraftSummary = { id: string; title: string; destination: string; companionCount: number };
+
 const room = (id: string) => `/api/drafts/${encodeURIComponent(id)}`;
 export const draftsApi = {
   async switchOption(id: string, optionId: string, version: number) {
@@ -17,7 +19,7 @@ export const draftsApi = {
     return (await api.post<DraftRoom>(`${room(id)}/regenerate-selection`, { draft, version })).data;
   },
   async create(draft: TripDraft) { return (await api.post<DraftRoom>('/api/drafts', draft)).data; },
-  async list() { return (await api.get<DraftRoom[]>('/api/drafts')).data; },
+  async listSummaries() { return (await api.get<DraftSummary[]>('/api/drafts/summaries')).data; },
   async get(id: string) { return (await api.get<DraftRoom>(room(id))).data; },
   async delete(id: string, version: number) { await api.delete(room(id), { params: { version } }); },
   async rename(id: string, title: string, version: number) {

@@ -56,7 +56,7 @@ class ConfirmedItineraryFallbackTests {
             assertDoesNotThrow(() -> TravelSchedule.validateDraft(result));
         } finally { service.shutdown(); }
     }
-    @Test void impossibleNightStyleOnEarlyDepartureIsExplainedRatherThanBlockingWholeTrip() {
+    @Test void nightStyleOnFirstDayDoesNotNeedRepeatingBeforeEarlyDeparture() {
         var original = TravelScheduleTests.selectedHotel();
         var input = new GenerateRequest("부산", null, 2, null, List.of("야경"), null,
                 new TravelDetails(original.movementMode(), original.stays(), new Transport(TransportMode.KTX, "부산역", "10:00", "부산역", "15:00")));
@@ -64,7 +64,7 @@ class ConfirmedItineraryFallbackTests {
         try {
             var result = service.generate(input);
             assertEquals(2, result.days().size());
-            assertTrue(result.warnings().stream().anyMatch(w -> w.contains("2일차") && w.contains("야경")));
+            assertTrue(result.days().get(0).places().stream().anyMatch(p -> p.fixedEventId()==null && TravelSchedule.minute(p.visitTime())>=18*60));
             assertTrue(result.days().get(1).places().stream().filter(p -> p.fixedEventId() == null)
                     .allMatch(p -> TravelSchedule.minute(p.visitTime()) + 60 + TravelSchedule.gap(result.travelDetails()) <= 14 * 60 + 30));
             assertDoesNotThrow(() -> TravelSchedule.validateDraft(result));

@@ -4,7 +4,7 @@ import { Alert, Pressable, RefreshControl, ScrollView, Text, TextInput, View } f
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { apiError } from '../../services/api';
-import { draftsApi, type DraftRoom } from '../../services/drafts';
+import { draftsApi, type DraftSummary } from '../../services/drafts';
 import { tripsApi, type TripSummary } from '../../services/trips';
 import { RequireAuth } from '@/components/require-auth';
 import { ScreenHeader } from '@/components/screen-header';
@@ -37,7 +37,7 @@ function HomeScreen() {
 
 function TripsTab() {
   const [trips, setTrips] = useState<TripSummary[]>([]);
-  const [drafts, setDrafts] = useState<DraftRoom[]>([]);
+  const [drafts, setDrafts] = useState<DraftSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +46,7 @@ function TripsTab() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [saved, pending] = await Promise.all([tripsApi.list(), draftsApi.list()]);
+      const [saved, pending] = await Promise.all([tripsApi.list(), draftsApi.listSummaries()]);
       setTrips(saved); setDrafts(pending);
       setError(null);
     } catch (e) {
@@ -80,7 +80,7 @@ function TripsTab() {
           <Text style={s.sectionTitle}>함께 편집 중인 초안</Text>
           <Text style={s.mutedSmall}>눌러서 여행 계획을 이어서 편집하세요</Text>
           {drafts.map((room) => <Pressable key={room.id} style={s.tripCard} onPress={() => router.push(`/draft/${room.id}`)}>
-            <View style={s.tripInfo}><Text style={s.tripTitle}>{room.draft.title}</Text><Text style={s.tripMeta}>{room.draft.destination} · 동행자 {room.members.filter((m) => m.role !== 'OWNER').length}명</Text></View><Text style={s.chevron}>›</Text>
+            <View style={s.tripInfo}><Text style={s.tripTitle}>{room.title}</Text><Text style={s.tripMeta}>{room.destination} · 동행자 {room.companionCount}명</Text></View><Text style={s.chevron}>›</Text>
           </Pressable>)}
         </View>}
         <View style={s.sectionHead}>

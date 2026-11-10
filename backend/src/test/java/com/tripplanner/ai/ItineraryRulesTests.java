@@ -25,12 +25,25 @@ class ItineraryRulesTests {
     @Test void shoppingIsPresentEveryDayOfSevenDays() {
         assertTrue(ItineraryRules.validate(sevenDays(), request(7)).isEmpty());
     }
-    @Test void missingStyleOnLastDayIsRejected() {
+    @Test void missingStyleOnLastDayIsAllowedWhenCoveredElsewhere() {
         var days = new ArrayList<>(sevenDays().days());
         days.set(6, new AiDay(7, List.of(food("새식당"),
                 new AiPlace("관광지", "관광지", "14:00", "관광", "", "", List.of())), List.of()));
         var errors = ItineraryRules.validate(new AiItinerary("여행", days), request(7));
-        assertTrue(errors.stream().anyMatch(e -> e.contains("7일차에 빠진 스타일")));
+        assertTrue(errors.isEmpty(), errors.toString());
+    }
+    @Test void eachSelectedStyleMayBeCoveredOnDifferentDays() {
+        var input=new AiItinerary("여행",List.of(
+            new AiDay(1,List.of(shop("상점"),food("식당1")),List.of()),
+            new AiDay(2,List.of(new AiPlace("카페","카페","10:00","카페","","",List.of("카페")),food("식당2")),List.of())));
+        var req=new ItineraryRequest("부산",null,2,null,List.of("쇼핑","카페"),null);
+        assertTrue(ItineraryRules.validate(input,req).isEmpty());
+    }
+    @Test void shoppingOnceDuringSevenDaysIsEnough() {
+        var days=new ArrayList<>(sevenDays().days());
+        for(int n=2;n<=7;n++)days.set(n-1,new AiDay(n,List.of(food("식당"+n),
+            new AiPlace("관광지"+n,"관광지","14:00","관광","","",List.of())),List.of()));
+        assertTrue(ItineraryRules.validate(new AiItinerary("여행",days),request(7)).isEmpty());
     }
     @Test void differentlySpacedDestinationPrefixDoesNotHideDuplicate() {
         var days = new ArrayList<>(sevenDays().days());

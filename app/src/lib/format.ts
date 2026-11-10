@@ -2,6 +2,8 @@ import type { Day, Place, Role, Trip, TripDraft } from '../../services/trips';
 
 export const STYLE_OPTIONS = ['맛집', '힐링', '자연', '쇼핑', '문화', '액티비티', '카페', '야경'];
 
+export function styleLabel(style: string) { return style === '액티비티' ? '체험' : style; }
+
 export const ROLE_LABEL: Record<Role, string> = { OWNER: '소유자', EDITOR: '편집 가능', VIEWER: '보기만' };
 
 /** Numeric budgets use won; preserve older free-text budgets without changing their meaning. */

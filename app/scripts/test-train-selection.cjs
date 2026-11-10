@@ -25,6 +25,13 @@ assert.equal(helper.validTrainSelection({...transport,arrivalLocation:{...arriva
 assert.equal(helper.patchTransport(transport,{originTime:'09:00'}).train,undefined);
 assert.equal(helper.patchTransport(transport,{mode:'CAR'}).train,undefined);
 assert.equal(helper.patchTransport(transport,{departureTime:'19:00'}).train.id,'one');
+const hotel={...arrival,name:'대구 호텔',placeId:'hotel'};
+assert.equal(helper.validTrainSelection({...transport,arrivalLocation:hotel,alightingStation:arrival},'2027-05-01'),true);
+assert.equal(helper.validTrainSelection({...transport,arrivalLocation:hotel},'2027-05-01'),false);
+assert.equal(helper.patchTransport({...transport,alightingStation:arrival},{alightingStation:origin}).train,undefined);
+assert.equal(helper.patchTransport({...transport,alightingStation:arrival},{arrivalLocation:hotel}).alightingStation,undefined);
+assert.equal(helper.returnQuery({...transport,returnAlightingStation:origin}).alightingStation,origin);
+assert.equal(helper.patchTransport({...transport,returnAlightingStation:origin,returnTrain:two},{returnAlightingStation:arrival}).returnTrain,undefined);
 let hooks=[],cursor=0,effects=[],date='2027-05-01',current={movementMode:'CAR',stays:[],transport:{...transport,train:undefined}},pending=[],changes=0;
 const react={
  useState(initial){const i=cursor++;if(!(i in hooks))hooks[i]=initial;return[hooks[i],(v)=>{hooks[i]=v;}];},
@@ -32,6 +39,7 @@ const react={
  useEffect(fn,deps){const i=cursor++,previous=hooks[i];if(!previous||deps.some((d,j)=>d!==previous.deps[j])){previous?.cleanup?.();const state=hooks[i]={deps};effects.push(()=>{state.cleanup=fn();});}},
 };
 const mod=compile('src/components/travel-details-input.tsx',(id)=>{
+ if(id==='@/components/train-station-choices')return{TrainStationChoices:'StationChoices'};
  if(id==='react')return react;
  if(id==='react/jsx-runtime')return{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props}),Fragment:'Fragment'};
  if(id==='react-native')return{Keyboard:{dismiss(){}},Pressable:'Pressable',ScrollView:'ScrollView',Text:'Text',View:'View'};
@@ -41,7 +49,7 @@ const mod=compile('src/components/travel-details-input.tsx',(id)=>{
  if(id==='@/lib/styles')return{s:{}};
  if(id==='@/lib/train-selection')return helper;
  if(id.endsWith('/services/api'))return{apiError:()=> '조회 실패'};
- if(id.endsWith('/services/trips'))return{tripsApi:{trainOptions:()=>new Promise((resolve,reject)=>pending.push({resolve,reject})),transportArrival:(query)=>new Promise((resolve,reject)=>pending.push({resolve,reject,query}))}};
+ if(id.endsWith('/services/trips'))return{tripsApi:{recommendTrainStation:(query)=>new Promise((resolve,reject)=>pending.push({resolve:trains=>resolve(Array.isArray(trains)?{station:query.boardingStation??query.originLocation,trains,distanceMeters:0}:trains),reject,query})),trainOptions:()=>new Promise((resolve,reject)=>pending.push({resolve,reject})),transportArrival:(query)=>new Promise((resolve,reject)=>pending.push({resolve,reject,query}))}};
  throw new Error(`Unexpected import ${id}`);
 });
 function render(){cursor=0;const tree=mod.TravelDetailsInput({value:current,onChange:(d)=>{current=d;changes++;},startDate:date,days:2,destination:'대구광역시'});effects.splice(0).forEach((fn)=>fn());return tree;}
@@ -50,9 +58,12 @@ function textOf(node){if(node==null)return '';if(Array.isArray(node))return node
 function button(tree,text){return flatten(tree).find((n)=>n.type==='Pressable'&&textOf(n.props.children).includes(text));}
 (async()=>{
  assert.match(mod.travelDetailsError(current,2,date),/열차 시간표/);
+ assert.equal(button(render(),'열차 시간표 조회').props.disabled,true,'Choose a departure station before querying trains');
+ flatten(render()).find(n=>n.type==='StationChoices').props.onChange(origin);
+ const selectionChanges=changes;
  let task=button(render(),'열차 시간표 조회').props.onPress();
  date='2027-05-02';render();pending[0].resolve([one,two]);await task;
- assert.equal(changes,0,'A stale response must not apply after the trip date changes');
+ assert.equal(changes,selectionChanges,'A stale response must not apply after the trip date changes');
  date='2027-05-01';task=button(render(),'열차 시간표 조회').props.onPress();pending[1].resolve([one,two]);await task;
  assert.equal(current.transport.train,undefined,'Lookup must not confirm a train');
  assert(flatten(render()).find((n)=>n.type==='Pressable'&&textOf(n.props.children)==='선택'));
@@ -96,5 +107,29 @@ function button(tree,text){return flatten(tree).find((n)=>n.type==='Pressable'&&
   assert.equal(current.transport.departureTime,'19:00');
   assert.equal(helper.patchTransport(current.transport,{departureTime:'20:00'}).returnArrivalTime,undefined);
  }
+ const methods=flatten(render()).filter((n)=>Array.isArray(n.props?.options)&&n.props.options.some((option)=>option[0]==='manual'));
+ methods.at(-1).props.onChange('manual');
+ assert.equal(current.transport.returnArrivalAuto,false);
+ assert.equal(current.transport.returnArrivalLocation.placeId,origin.placeId);
+ const manualTime=flatten(render()).filter((n)=>n.type==='TimeField'&&n.props.label==='도착 시각').at(-1);
+ manualTime.props.onChange('21:00');
+ assert.equal(current.transport.returnArrivalTime,'21:00');
+ assert.equal(mod.travelDetailsError(current,2,date),undefined);
+ assert(!flatten(render()).some((n)=>n.type==='Pressable'&&textOf(n.props.children)==='예상 도착 시각 확인'),'Manual mode must hide return lookup');
+ current={...current,transport:helper.patchTransport(current.transport,{returnArrivalAuto:true})};
+ assert.equal(current.transport.returnArrivalTime,undefined);
+ current={...current,transport:{...transport,train:undefined,boardingStation:undefined,originLocation:{...origin,name:'광화문',placeId:'5'},returnArrivalAuto:false,returnArrivalTime:'21:00',returnArrivalLocation:origin}};
+ const beforeRecommendation=pending.length;
+ task=flatten(render()).find(n=>n.type==='Pressable'&&textOf(n.props.children)==='열차 시간표 조회').props.onPress();
+ assert.equal(pending[beforeRecommendation].query.originLocation.name,'광화문');
+ pending[beforeRecommendation].resolve({station:origin,trains:[one,two].map(t=>({...t,date})),distanceMeters:2000});await task;
+ assert.equal(current.transport.originLocation.name,'광화문','Recommendation must preserve the original starting place');
+ assert.equal(current.transport.boardingStation.name,origin.name);
+ flatten(render()).find(n=>n.type==='Pressable'&&textOf(n.props.children)==='선택').props.onPress();
+ assert.equal(helper.validTrainSelection(current.transport,date),true,'Train validation must use the recommended station while preserving the original starting place');
+ const stationChoices=flatten(render()).find(n=>n.type==='StationChoices');
+ stationChoices.props.onChange({...origin,name:'용산역',placeId:'6'});
+ assert.equal(current.transport.boardingStation.name,'용산역'); assert.equal(current.transport.train,undefined);
+ assert.equal(current.transport.originLocation.name,'광화문');
  console.log('Train selection checks passed: default and alternate arrivals, stale responses, date/station/time changes, and manual fallback.');
 })().catch((error)=>{console.error(error);process.exitCode=1;});

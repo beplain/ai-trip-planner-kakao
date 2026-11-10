@@ -48,6 +48,16 @@ class ItinerarySchedulerTests {
         assertTrue(TravelSchedule.minute(result.days().get(0).places().get(0).visitTime()) >= 18 * 60);
         assertTrue(ItineraryRules.validate(result, late).isEmpty());
     }
+    @Test void styleIsNotRequiredAgainOnTheSecondDay() {
+        var r=new ItineraryRequest("대구",null,2,null,List.of("카페"),null,
+            new TravelDetails(MovementMode.CAR,List.of(),null));
+        var input=new AiItinerary("여행",List.of(
+            new AiDay(1,List.of(p("카페","10:00","카페","카페")),List.of()),
+            new AiDay(2,List.of(p("공원","10:00","관광")),List.of())));
+        var result=ItineraryScheduler.prepare(input,r);
+        assertTrue(ItineraryRules.validate(result,r).isEmpty());
+        assertEquals("공원",result.days().get(1).places().get(0).name());
+    }
     @Test void legacyRequestsWithoutTravelDetailsKeepOriginalItinerary() {
         var input = new AiItinerary("대구", List.of(new AiDay(1, List.of(p("카페", "10:00", "카페")), List.of())));
         assertSame(input, ItineraryScheduler.prepare(input, new ItineraryRequest("대구", null, 1, null, List.of(), null)));

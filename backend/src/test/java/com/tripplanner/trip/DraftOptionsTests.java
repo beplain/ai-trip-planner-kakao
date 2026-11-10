@@ -27,6 +27,68 @@ class DraftOptionsTests {
             assertDoesNotThrow(() -> TravelSchedule.validateDraft(option));
         }
     }
+    @Test void sevenDayEightStylesMayBeDistributedAcrossDaysForAllThreeProfiles() {
+        String[] categories={"식당","自然","自然","쇼핑","문화","체험","카페","관광"};
+        categories[1]="자연";categories[2]="자연";
+        var date=java.time.LocalDate.of(2026,11,23);
+        var days=new ArrayList<DayDraft>();var pool=new HashMap<Integer,List<PlaceDraft>>();
+        int id=0;
+        for(int day=1;day<=7;day++) {
+            var visits=new ArrayList<PlaceDraft>();
+            for(int n=0;n<3;n++) {
+                String category=categories[Math.min(day-1,7)];
+                if(day==7&&n==1)category="관광";
+                var p=new PlaceDraft("p"+(id++),"장소"+id,"부산",35.0,129.0,day==7&&n==1?"19:00":n==0?"10:00":n==1?"12:00":"14:00",null,null,category,true,null,null);
+                visits.add(p);
+            }
+            visits.sort(Comparator.comparing(PlaceDraft::visitTime));
+            days.add(new DayDraft(day,date.plusDays(day-1),visits));pool.put(day,visits);
+        }
+        var original=new TripDraft("여행","부산",date,date.plusDays(6),null,ItineraryRules.STYLES,days,"AI",List.of(),null,new TravelDetails(MovementMode.CAR,List.of(),null));
+        var options=DraftOptionComposer.compose(original,pool);
+        assertEquals(3,options.size());
+        assertEquals(3,options.stream().map(DraftOptionComposer::fingerprint).distinct().count());
+        options.forEach(option->{assertDoesNotThrow(()->DraftOptionComposer.requireCoverage(option));assertDoesNotThrow(()->TravelSchedule.validateDraft(option));});
+    }
+    @Test void restoresShoppingRemovedByWalkingAdjustmentUsingNearbyUnusedCandidate() {
+        var date=java.time.LocalDate.of(2026,11,23);
+        var food=new PlaceDraft("food","식당","경상북도 경주시",35.84,129.21,"12:00",null,null,"식당",true,null,null);
+        var food2=new PlaceDraft("food2","다른식당","경상북도 경주시",35.841,129.21,"12:00",null,null,"식당",true,null,null);
+        var nearShop=new PlaceDraft("near","가까운상점","경상북도 경주시",35.842,129.21,"14:00",null,null,"쇼핑",true,null,null);
+        var original=new TripDraft("경주","경상북도 경주시",date,date.plusDays(1),null,List.of("맛집","쇼핑"),
+            List.of(new DayDraft(1,date,List.of(food)),new DayDraft(2,date.plusDays(1),List.of(food2))),"AI",List.of(),null,new TravelDetails(MovementMode.WALK,List.of(),null));
+        var candidates=DraftOptionComposer.recoveryCandidates(original,Map.of(1,List.of(nearShop)));
+        assertFalse(candidates.isEmpty());
+        var client=new RouteTimeClient("","",0,org.springframework.web.client.RestClient.builder().requestFactory(new org.springframework.http.client.SimpleClientHttpRequestFactory()).build());
+        try {
+            var routed=new RoutedItineraryService(client).adjustOptions(candidates);
+            assertTrue(routed.stream().anyMatch(d->{try{DraftOptionComposer.requireCoverage(d);TravelSchedule.validateDraft(d);return true;}catch(IllegalArgumentException e){return false;}}));
+            assertTrue(routed.stream().anyMatch(d->d.days().stream().flatMap(day->day.places().stream()).anyMatch(p->p.placeId().equals("near"))));
+        }finally{client.shutdown();}
+    }
+    @Test void twoDayGyeongjuWalkingFoodAndShoppingProducesThreeAfterFarShopIsDropped() {
+        var date=java.time.LocalDate.of(2026,11,23);
+        var first=new AiDay(1,List.of(
+            new AiPlace("식당1","식당1","10:00","식당","","",List.of("맛집")),
+            new AiPlace("상점먼곳","상점먼곳","12:00","쇼핑","","",List.of("쇼핑")),
+            new AiPlace("식당2","식당2","14:00","식당","","",List.of("맛집"))),
+            java.util.stream.IntStream.range(1,5).mapToObj(n->new AiPlace("상점근처"+n,"상점근처"+n,"16:00","쇼핑","","",List.of("쇼핑"))).toList());
+        var second=new AiDay(2,List.of(
+            new AiPlace("식당3","식당3","10:00","식당","","",List.of("맛집")),
+            new AiPlace("식당4","식당4","12:00","식당","","",List.of("맛집"))),List.of());
+        var ai=new TripGenerationRulesTests.FakeAi(new AiItinerary("경주 여행",List.of(first,second)));
+        var maps=new TripGenerationRulesTests.FakePlaces(){
+            @Override public List<PlaceHit> search(String q,Area a,int size){return List.of(new PlaceHit(q,q,"경상북도 경주시",q.contains("먼곳")?36.84:35.84,129.21+Math.floorMod(q.hashCode(),10)*0.0001,null,null,q.startsWith("식당")?"음식점":"대형마트",null));}
+        };
+        var routes=new RouteTimeClient("","",0,org.springframework.web.client.RestClient.builder().requestFactory(new org.springframework.http.client.SimpleClientHttpRequestFactory()).build());
+        var service=new TripGenerationService(ai,new SampleItineraryGenerator(),maps,new RoutedItineraryService(routes));
+        try {
+            var result=service.generateOptions(new GenerateRequest("경상북도 경주시",date,2,null,List.of("맛집","쇼핑"),null,new TravelDetails(MovementMode.WALK,List.of(),null)));
+            assertEquals(3,result.options().size());
+            assertEquals(3,result.options().stream().map(o->DraftOptionComposer.fingerprint(o.draft())).distinct().count());
+            for(var option:result.options()) {assertDoesNotThrow(()->DraftOptionComposer.requireCoverage(option.draft()));assertDoesNotThrow(()->TravelSchedule.validateDraft(option.draft()));}
+        }finally{service.shutdown();routes.shutdown();}
+    }
     static PlaceDraft shop(int i, String time) {
         return new PlaceDraft("shop"+i,"상점"+i,"부산",35.0,129.0+i*0.001,time,"추천","","쇼핑",true,"url",null);
     }
@@ -86,15 +148,15 @@ class DraftOptionsTests {
             assertEquals(3,result.options().stream().map(o -> DraftOptionComposer.fingerprint(o.draft())).distinct().count());
         } finally { service.shutdown(); }
     }
-    @Test void insufficientCandidatesReturnUsableChoiceInsteadOfFakeDuplicates() {
+    @Test void limitedCandidatesStillProduceThreeDistinctProfiles() {
         var ai = new TripGenerationRulesTests.FakeAi(new AiItinerary("부산",List.of(new AiDay(1,List.of(
                 TripGenerationRulesTests.shop("상점A"),TripGenerationRulesTests.food("식당A")),List.of()))));
         var service = new TripGenerationService(ai,new SampleItineraryGenerator(),new TripGenerationRulesTests.FakePlaces());
         try {
             var result = service.generateOptions(new GenerateRequest("부산",null,1,null,List.of("쇼핑"),null));
-            assertFalse(result.options().isEmpty()); assertTrue(result.options().size()<=3);
+            assertEquals(3,result.options().size());
             assertEquals(result.options().size(),result.options().stream().map(o -> DraftOptionComposer.fingerprint(o.draft())).distinct().count());
-            if (result.options().size()<3) assertFalse(result.warnings().isEmpty());
+            assertTrue(result.warnings().isEmpty());
         } finally { service.shutdown(); }
     }
 }

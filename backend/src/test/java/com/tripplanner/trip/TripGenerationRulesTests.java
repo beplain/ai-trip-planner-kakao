@@ -50,7 +50,7 @@ class TripGenerationRulesTests {
             assertEquals(1, ai.calls);
         } finally { service.shutdown(); }
     }
-    @Test void duplicateCannotReturnAsUnverifiedPlaceAndRetryIsBounded() {
+    @Test void duplicateIsRepairedBeforeSpendingASecondAiCall() {
         var ai = new FakeAi(input(List.of()));
         var service = new TripGenerationService(ai, new SampleItineraryGenerator(), new FakePlaces());
         try {
@@ -58,8 +58,9 @@ class TripGenerationRulesTests {
             var visits = result.days().stream().flatMap(d -> d.places().stream()).filter(p -> p.fixedEventId() == null).toList();
             assertTrue(visits.stream().allMatch(TripDtos.PlaceDraft::verified));
             assertEquals(visits.size(), visits.stream().map(TripDtos.PlaceDraft::placeId).distinct().count());
-            assertEquals(2, ai.calls);
-            assertNotNull(ai.feedback);
+            assertEquals(1, ai.calls);
+            assertNull(ai.feedback);
+            assertDoesNotThrow(() -> DraftOptionComposer.requireCoverage(result));
         } finally { service.shutdown(); }
     }
     @Test void unrelatedAlternativeCannotReplaceShopping() {
@@ -139,4 +140,31 @@ class TripGenerationRulesTests {
             assertTrue(draft.days().stream().allMatch(d -> d.places().stream().anyMatch(p -> "쇼핑".equals(p.category()))));
         } finally { service.shutdown(); }
     }
+    @Test void secondAiCallStillRunsWhenLocalRepairCannotFindVerifiedCandidates() {
+        var first=new AiItinerary("부산",List.of(
+            new AiDay(1,List.of(shop("없는상점A"),food("없는식당A")),List.of()),
+            new AiDay(2,List.of(shop("없는상점B"),food("없는식당B")),List.of())));
+        var second=new AiItinerary("부산",List.of(
+            new AiDay(1,List.of(shop("상점A"),food("식당A")),List.of()),
+            new AiDay(2,List.of(shop("상점B"),food("식당B")),List.of())));
+        var ai=new FakeAi(first) {
+            @Override public AiItinerary generate(ItineraryRequest r,String feedback) {
+                calls++;this.feedback=feedback;return calls==1?first:second;
+            }
+        };
+        var places=new FakePlaces() {
+            @Override public List<PlaceHit> search(String q,Area area,int count) {
+                return ai.calls<2?List.of():super.search(q,area,count);
+            }
+        };
+        var service=new TripGenerationService(ai,new SampleItineraryGenerator(),places);
+        try {
+            var result=service.generate(request());
+            assertEquals(2,ai.calls);assertNotNull(ai.feedback);
+            assertEquals(2,result.days().size());
+            assertTrue(result.days().stream().flatMap(d->d.places().stream()).allMatch(TripDtos.PlaceDraft::verified));
+            assertDoesNotThrow(() -> DraftOptionComposer.requireCoverage(result));
+        }finally {service.shutdown();}
+    }
+
 }

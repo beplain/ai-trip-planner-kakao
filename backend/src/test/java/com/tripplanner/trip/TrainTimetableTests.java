@@ -49,6 +49,31 @@ class TrainTimetableTests {
         assertEquals("07:50",options.get(0).departureTime()); assertEquals("09:50",options.get(0).arrivalTime());
         server.verify();
     }
+    @Test void nonStationStartingPlaceUsesTheChosenBoardingStationAndIsPreservedAfterCalculation() throws Exception {
+        var builder=RestClient.builder(); var server=MockRestServiceServer.bindTo(builder).build(); metadata(server); timetable(server,schedules()); timetable(server,schedules());
+        var t=request();
+        var input=new Transport(t.mode(),t.arrivalPlace(),t.arrivalTime(),t.departurePlace(),t.departureTime(),t.arrivalLocation(),t.departureLocation(),station("광화문","서울특별시 종로구","9"),t.originTime(),true).withStations(t.originLocation(),null);
+        var client=new TrainTimetableClient("test",builder.build());
+        assertFalse(client.options(input,DATE).isEmpty());
+        var result=new TransportArrivalService(null,client).calculate(input,DATE);
+        assertEquals("광화문",result.originLocation().name()); assertEquals(t.originLocation(),result.boardingStation());
+        assertEquals("서울",result.train().originStation()); server.verify();
+    }
+    @Test void nonStationDestinationUsesAlightingStationAndPreservesFinalPlace() throws Exception {
+        var builder=RestClient.builder();var server=MockRestServiceServer.bindTo(builder).build();metadata(server);timetable(server,schedules());
+        var t=request();var hotel=station("대구 호텔","대구광역시 북구","99");
+        var input=new Transport(t.mode(),hotel.name(),t.arrivalTime(),t.departurePlace(),t.departureTime(),hotel,t.departureLocation(),t.originLocation(),t.originTime(),true)
+            .withStations(t.originLocation(),t.departureLocation()).withAlightingStations(t.arrivalLocation(),t.originLocation());
+        var result=new TransportArrivalService(null,new TrainTimetableClient("test",builder.build())).calculate(input,DATE);
+        assertEquals(hotel,result.arrivalLocation());assertEquals(t.arrivalLocation(),result.alightingStation());
+        assertEquals(t.originLocation(),result.returnAlightingStation());assertEquals("대구",result.train().arrivalStation());
+        var details=new TravelDetails(MovementMode.CAR,List.of(),result);
+        var event=TravelSchedule.events(details,2).stream().filter(e->e.id().equals("transport:arrival")).findFirst().orElseThrow();
+        assertEquals(t.arrivalLocation().placeId(),event.selectedPlace().placeId());
+        assertTrue(TravelSchedule.prompt(details,2).contains("기차 하차 후 도착 장소: 대구 호텔"));
+        var mapper=new ObjectMapper().findAndRegisterModules();
+        assertEquals(result,mapper.readValue(mapper.writeValueAsString(result),Transport.class));server.verify();
+    }
     @Test void arrivalComesFromSelectedTimetableNotClientSuppliedTimesAndRevalidatesBeforePrompt() throws Exception {
         var builder=RestClient.builder(); var server=MockRestServiceServer.bindTo(builder).build(); metadata(server); timetable(server,schedules()); timetable(server,schedules());
         var client=new TrainTimetableClient("test",builder.build());
@@ -149,11 +174,13 @@ class TrainTimetableTests {
         var q=new Transport(TransportMode.KTX,"서울역","21:00","대구역","19:00",t.originLocation(),null,t.departureLocation(),"19:00",true);
         var selected=client.options(q,DATE.plusDays(1)).get(0);
         var forged=new TrainOption(selected.id(),selected.date(),"fake","fake","대구","서울","19:30","22:00");
-        var input=new Transport(t.mode(),t.arrivalPlace(),t.arrivalTime(),t.departurePlace(),"19:00",t.arrivalLocation(),t.departureLocation(),t.originLocation(),t.originTime(),false,null,t.originLocation(),forged);
+        var input=new Transport(t.mode(),t.arrivalPlace(),t.arrivalTime(),t.departurePlace(),"19:00",t.arrivalLocation(),station("대구호텔","대구광역시 북구","8"),t.originLocation(),t.originTime(),false,null,t.originLocation(),forged).withStations(null,t.departureLocation());
         var result=new TransportArrivalService(null,client).resolve(new GenerateRequest("대구광역시",DATE,2,null,List.of(),null,new TravelDetails(MovementMode.CAR,List.of(),input)));
         assertEquals("19:00",result.travelDetails().transport().departureTime());
         assertEquals("18:50",result.travelDetails().transport().returnTrain().departureTime());
         assertEquals(18*60+20,TravelSchedule.end(2,2,result.travelDetails()));
         assertTrue(TravelSchedule.prompt(result.travelDetails(),2).contains("18:50 출발")); server.verify();
+        assertEquals("대구호텔",result.travelDetails().transport().departureLocation().name());
+        assertTrue(TravelSchedule.events(result.travelDetails(),2).stream().anyMatch(e->e.id().equals("transport:departure") && e.name().contains("대구역")));
     }
 }

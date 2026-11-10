@@ -8,6 +8,16 @@ public class ItineraryPlace {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+    @Lob
+    private String businessHoursJson;
+    public com.tripplanner.place.BusinessHoursInfo getBusinessHours() {
+        try { return businessHoursJson == null ? null : new com.fasterxml.jackson.databind.ObjectMapper().readValue(businessHoursJson,com.tripplanner.place.BusinessHoursInfo.class); }
+        catch(Exception e) { return null; }
+    }
+    public void setBusinessHours(com.tripplanner.place.BusinessHoursInfo value) {
+        try { businessHoursJson=value==null?null:new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(value); }
+        catch(Exception e) { throw new IllegalArgumentException("Invalid business hours",e); }
+    }
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "trip_day_id")

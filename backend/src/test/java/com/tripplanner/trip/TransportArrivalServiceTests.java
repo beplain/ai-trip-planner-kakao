@@ -102,4 +102,21 @@ class TransportArrivalServiceTests {
             } finally { routes.shutdown(); }
         }
     }
+
+    @Test void manuallySelectedReturnTimesArePreservedWithoutRoadOrTimetableLookups() {
+        var routes=new RouteTimeClient("test","test",3,noNetwork());
+        try {
+            for(var mode:List.of(TransportMode.KTX,TransportMode.CAR,TransportMode.BUS)) {
+                var t=input(mode,"08:00",false);
+                var manual=new Transport(t.mode(),t.arrivalPlace(),t.arrivalTime(),t.departurePlace(),"19:00",t.arrivalLocation(),t.departureLocation(),t.originLocation(),t.originTime(),false,null,selected("3",127.2),null,"21:00",false);
+                var request=new GenerateRequest("서울",null,2,null,List.of(),null,new TravelDetails(MovementMode.CAR,List.of(),manual));
+                var saved=new TransportArrivalService(routes).resolve(request).travelDetails();
+                assertEquals("21:00",saved.transport().returnArrivalTime());
+                assertEquals(Boolean.FALSE,saved.transport().returnArrivalAuto());
+                TravelSchedule.validate(saved,2);
+                var invalid=new Transport(t.mode(),t.arrivalPlace(),t.arrivalTime(),t.departurePlace(),"19:00",t.arrivalLocation(),t.departureLocation(),t.originLocation(),t.originTime(),false,null,selected("3",127.2),null,"18:00",false);
+                assertThrows(ApiException.class,()->TravelSchedule.validate(new TravelDetails(MovementMode.CAR,List.of(),invalid),2));
+            }
+        } finally { routes.shutdown(); }
+    }
 }

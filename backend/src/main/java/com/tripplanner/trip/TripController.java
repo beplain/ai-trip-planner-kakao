@@ -16,13 +16,11 @@ public class TripController {
     private final TripService trips;
     private final TripGenerationService generator;
     private final InviteService invites;
-    private final TalkCalendarService calendar;
 
-    public TripController(TripService trips, TripGenerationService generator, InviteService invites, TalkCalendarService calendar) {
+    public TripController(TripService trips, TripGenerationService generator, InviteService invites) {
         this.trips = trips;
         this.generator = generator;
         this.invites = invites;
-        this.calendar = calendar;
     }
 
     /** 여행 조건 → AI 초안 (저장하지 않음) */
@@ -41,18 +39,7 @@ public class TripController {
     @ResponseStatus(HttpStatus.CREATED)
     public TripResponse create(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody TripDraft draft) {
         Long userId = CurrentUser.id(jwt);
-        TripResponse saved = trips.create(draft, userId);
-        return saved.withCalendar(calendar.syncAfterSave(saved.id(), userId));
-    }
-
-    @GetMapping("/{tripId}/calendar")
-    public CalendarResult calendarStatus(@AuthenticationPrincipal Jwt jwt, @PathVariable Long tripId) {
-        return calendar.status(tripId, CurrentUser.id(jwt));
-    }
-
-    @PostMapping("/{tripId}/calendar")
-    public CalendarResult registerCalendar(@AuthenticationPrincipal Jwt jwt, @PathVariable Long tripId) {
-        return calendar.sync(tripId, CurrentUser.id(jwt));
+        return trips.create(draft, userId);
     }
 
     @GetMapping

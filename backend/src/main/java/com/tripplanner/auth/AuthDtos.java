@@ -12,9 +12,9 @@ public final class AuthDtos {
 
     public record DevLoginRequest(@NotBlank @Size(max = 30) String name) {}
 
-    public record UserResponse(Long id, String email, String name, boolean calendarConnected) {
+    public record UserResponse(Long id, String email, String name) {
         public static UserResponse of(User u) {
-            return new UserResponse(u.getId(), u.getEmail(), u.getName(), u.isKakaoCalendarConnected());
+            return new UserResponse(u.getId(), u.getEmail(), u.getName());
         }
     }
 

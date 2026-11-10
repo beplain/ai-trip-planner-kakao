@@ -45,11 +45,11 @@ function TimeDialog({ value, label, onSave, onClose }: { value: string; label: s
     </View>
   </SafeAreaView>;
 }
-export function TimeWheelInput({ label, value, onChange }: { label: string; value: string; onChange: (time: string) => void }) {
+export function TimeWheelInput({ label, value, onChange, minWidth = 0 }: { label: string; value: string; onChange: (time: string) => void; minWidth?: number }) {
   const [open, setOpen] = useState(false);
-  return <View style={{ flex: 1, gap: 6 }}><Text style={s.mutedSmall}>{label}</Text>
+  return <View style={{ flex: 1, minWidth, gap: 6 }}><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={s.mutedSmall}>{label}</Text>
     <Pressable accessibilityRole="button" accessibilityLabel={`${label} ${value}, 시간 선택`} onPress={() => { Keyboard.dismiss(); setOpen(true); }} style={[s.input, { justifyContent: 'center' }]}>
-      <Text style={{ color: '#172033', fontSize: 16 }}>{value || '시간 선택'} ⌄</Text>
+      <Text numberOfLines={1} style={{ color: '#172033', fontSize: 16 }}>{value || '시간 선택'} ⌄</Text>
     </Pressable>
     <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
       <SafeAreaProvider>{open && <TimeDialog value={value} label={label} onClose={() => setOpen(false)} onSave={(time) => { onChange(time); setOpen(false); }} />}</SafeAreaProvider>

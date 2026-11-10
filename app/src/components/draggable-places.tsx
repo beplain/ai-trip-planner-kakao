@@ -8,6 +8,7 @@ import { C, s } from '@/lib/styles';
 import { PlaceCard } from './place-card';
 
 type Props = {
+  visitDate?: string;
   places: Place[]; color: string; editable: boolean; busy: boolean; scroll: DragScroll;
   onReorder: (from: number, to: number) => void;
   onDelete: (place: Place, index: number) => void;
@@ -15,7 +16,7 @@ type Props = {
 };
 type Drag = { from: number; to: number; delta: number; height: number };
 
-export function DraggablePlaces({ places, color, editable, busy, scroll, onReorder, onDelete, onEditMemo }: Props) {
+export function DraggablePlaces({ places, visitDate, color, editable, busy, scroll, onReorder, onDelete, onEditMemo }: Props) {
   const bounds = useRef<RowBounds[]>([]);
   const session = useRef<{ from: number; startScroll: number; dy: number; to: number } | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -68,7 +69,7 @@ export function DraggablePlaces({ places, color, editable, busy, scroll, onReord
           style={{ transform: [{ translateY: shift }], zIndex: active ? 20 : 0, elevation: active ? 8 : 0, opacity: active ? 0.92 : 1 }}>
           <View pointerEvents={drag ? 'none' : 'auto'}>
             {editable && !place.fixedEventId && places.length > 1 && <Text style={[s.mutedSmall, { paddingLeft: 26, paddingVertical: 5, color: active ? C.primary : '#74809A' }]}>{active ? `이동 중 · 장소 ${drag.to + 1} 위치에 놓기` : '☰  길게 눌러 이동'}</Text>}
-            <PlaceCard place={place} index={index} isLast={index === places.length - 1} color={color} editable={editable} busy={busy || !!drag}
+            <PlaceCard place={place} visitDate={visitDate} index={index} isLast={index === places.length - 1} color={color} editable={editable} busy={busy || !!drag}
               onEditMemo={() => onEditMemo(place, index)} onDelete={() => onDelete(place, index)} />
           </View>
         </View>

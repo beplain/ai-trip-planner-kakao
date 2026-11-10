@@ -24,14 +24,12 @@ public class AuthService {
     private final UserRepository users;
     private final JwtEncoder encoder;
     private final AppProperties props;
-    private final KakaoTokenVault tokenVault;
 
-    public AuthService(KakaoOAuthClient kakao, UserRepository users, JwtEncoder encoder, AppProperties props, KakaoTokenVault tokenVault) {
+    public AuthService(KakaoOAuthClient kakao, UserRepository users, JwtEncoder encoder, AppProperties props) {
         this.kakao = kakao;
         this.users = users;
         this.encoder = encoder;
         this.props = props;
-        this.tokenVault = tokenVault;
     }
 
     /** 카카오 인가 코드로 사용자 확인 → 회원 생성/갱신 → 앱용 JWT */
@@ -42,7 +40,6 @@ public class AuthService {
         User user = users.findByAuthSubject(subject)
                 .map(u -> { u.updateProfile(k.email(), k.nickname()); return u; })
                 .orElseGet(() -> users.save(new User(subject, k.email(), k.nickname())));
-        tokenVault.store(user, k.tokens());
         return issue(user);
     }
 

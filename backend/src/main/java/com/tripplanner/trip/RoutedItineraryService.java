@@ -17,19 +17,22 @@ public class RoutedItineraryService {
         return arrival.resolve(request);
     }
 
-    public TripDraft adjust(TripDraft draft) {
+    public TripDraft adjust(TripDraft draft) { return adjust(draft,(p,time)->true); }
+    public TripDraft adjust(TripDraft draft, java.util.function.BiPredicate<PlaceDraft,String> eligible) {
         TravelDetails details = draft.travelDetails();
         var session = routes.session(details == null ? MovementMode.PUBLIC_TRANSIT : details.movementMode());
-        return adjust(draft,session);
+        return adjust(draft,session,eligible);
     }
 
-    List<TripDraft> adjustOptions(List<TripDraft> drafts) {
+    List<TripDraft> adjustOptions(List<TripDraft> drafts) { return adjustOptions(drafts,d->(p,time)->true); }
+    List<TripDraft> adjustOptions(List<TripDraft> drafts, java.util.function.Function<TripDraft,java.util.function.BiPredicate<PlaceDraft,String>> eligibility) {
+        if(drafts.isEmpty())return List.of();
         TravelDetails details = drafts.get(0).travelDetails();
         var session = routes.session(details == null ? MovementMode.PUBLIC_TRANSIT : details.movementMode());
-        return drafts.stream().map(draft -> adjust(draft,session)).toList();
+        return drafts.stream().map(draft -> adjust(draft,session,eligibility.apply(draft))).toList();
     }
 
-    private TripDraft adjust(TripDraft draft, RouteTimeClient.Session session) {
+    private TripDraft adjust(TripDraft draft, RouteTimeClient.Session session, java.util.function.BiPredicate<PlaceDraft,String> eligible) {
         TravelDetails details = draft.travelDetails();
         List<String> warnings = new ArrayList<>(draft.warnings() == null ? List.of() : draft.warnings());
         if (!session.enabled()) {
@@ -47,7 +50,7 @@ public class RoutedItineraryService {
         }
         session.prefetch(paths);
         // Read current legs first. Unknown legs must never make an unmeasured swap look faster.
-        TripDraft optimized = TripRouteOptimizer.optimize(draft, (a, b) -> routeCost(session, a, b));
+        TripDraft optimized = TripRouteOptimizer.optimize(draft, (a, b) -> routeCost(session, a, b),eligible);
         List<DayDraft> days = new ArrayList<>();
         var events = TravelSchedule.events(details, draft.days().size());
         for (DayDraft day : optimized.days()) {
@@ -68,10 +71,10 @@ public class RoutedItineraryService {
                 }
                 int time = Math.max(original, ready);
                 if (previousOrdinary >= 0) time = Math.max(time, previousOrdinary + 60 + TravelSchedule.gap(details));
-                time = ((time + 4) / 5) * 5;
+                if (!DraftMealPlanner.scheduledMeal(place) || time != original) time = ((time + 4) / 5) * 5;
                 Map<PlaceDraft, Integer> origin = Map.of(place, original);
                 // Moving later must still respect meals/night, fixed commitments and daily bounds.
-                while (time < 22 * 60 && !TravelSchedule.allowed(day.dayNumber(), draft.days().size(), time, details, events)) time += 5;
+                while (time < 22 * 60 && (!TravelSchedule.allowed(day.dayNumber(), draft.days().size(), time, details, events) || !eligible.test(place,TravelSchedule.clock(time)))) time += 5;
                 PlaceDraft nextFixed = null;
                 for (int j = i + 1; j < day.places().size(); j++) if (day.places().get(j).fixedEventId() != null) {
                     nextFixed = day.places().get(j); break;
@@ -80,9 +83,9 @@ public class RoutedItineraryService {
                 OptionalInt outgoing = end == null ? OptionalInt.empty() : session.minutes(place, end);
                 int limit = nextFixed == null ? TravelSchedule.end(day.dayNumber(), draft.days().size(), details)
                         : TravelSchedule.minute(nextFixed.visitTime());
-                boolean fits = time < 22 * 60 && time + 60 <= limit && TripRouteOptimizer.fits(place, TravelSchedule.clock(time), origin)
+                boolean fits = time < 22 * 60 && eligible.test(place,TravelSchedule.clock(time)) && time + 60 <= limit && TripRouteOptimizer.fits(place, TravelSchedule.clock(time), origin)
                         && TravelSchedule.allowed(day.dayNumber(), draft.days().size(), time, details, events)
-                        && ExtraRequestRules.mealTimeAllowed(place,TravelSchedule.clock(time),draft.request(),day.dayNumber(),draft.days().size())
+                        && ExtraRequestRules.mealTimeAllowed(place,TravelSchedule.clock(time),draft.effectiveRequest(),day.dayNumber(),draft.days().size())
                         && (outgoing.isEmpty() || time + 60 + outgoing.getAsInt() + (outgoing.getAsInt() > 0 ? 10 : 0) <= limit);
                 if (!fits) {
                     warnings.add(day.dayNumber()+"일차 이동·고정 일정 시간을 확보하기 위해 제외한 장소: "+place.name()+". 여행 스타일 일부가 빠질 수 있습니다.");
@@ -94,7 +97,8 @@ public class RoutedItineraryService {
             days.add(new DayDraft(day.dayNumber(), day.date(), List.copyOf(out)));
         }
         if (session.incomplete()) warnings.add("경로 조회 한도·응답 오류·좌표 누락으로 일부 구간의 실제 이동 시간을 확인하지 못했습니다. 해당 구간은 기존 이동 여유 시간을 적용했습니다.");
-        warnings.add("경로 조회에 성공한 구간에만 조회 시점의 예상 이동 시간을 반영합니다. 여행 당일 교통 정체·배차·막차·운행 여부는 달라질 수 있습니다.");
+        if(details!=null && details.movementMode()==MovementMode.WALK) warnings.add("도보 이동 시간은 직선거리·거리 여유 1.3배·시속 4km 기준의 예상치이며 실제 보행 경로와 다를 수 있습니다.");
+        else warnings.add("경로 조회에 성공한 구간에만 조회 시점의 예상 이동 시간을 반영합니다. 여행 당일 교통 정체·배차·막차·운행 여부는 달라질 수 있습니다.");
         TripDraft result = copy(draft, days, warnings);
         TravelSchedule.validateDraft(result);
         return result;
@@ -116,6 +120,6 @@ public class RoutedItineraryService {
     }
     private static TripDraft copy(TripDraft d, List<DayDraft> days, List<String> warnings) {
         return new TripDraft(d.title(), d.destination(), d.startDate(), d.endDate(), d.budget(), d.styles(), days,
-                d.source(), warnings.stream().distinct().toList(), d.request(), d.travelDetails());
+                d.source(), warnings.stream().distinct().toList(), d.request(), d.travelDetails()).withRequestMetadata(d.request(),d.interpretedRequest());
     }
 }

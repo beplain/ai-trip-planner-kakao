@@ -18,7 +18,7 @@ public class DraftRegenerationService {
         return new DraftOptions(options.options().stream().map(option -> {
             var d = option.draft();
             return new DraftOption(option.id(),option.label(),option.description(),new TripDraft(request.title().trim(),d.destination(),d.startDate(),d.endDate(),
-                    d.budget(),d.styles(),d.days(),d.source(),d.warnings(),d.request(),d.travelDetails()));
+                    d.budget(),d.styles(),d.days(),d.source(),d.warnings(),d.request(),d.travelDetails()).withRequestMetadata(d.request(),d.interpretedRequest()));
         }).toList(),options.warnings());
     }
 
@@ -26,7 +26,7 @@ public class DraftRegenerationService {
         drafts.checkRegeneration(id, request.version(), user);
         var generated = generator.generate(request.input());
         var replacement = new TripDraft(request.title().trim(), generated.destination(), generated.startDate(), generated.endDate(),
-                generated.budget(), generated.styles(), generated.days(), generated.source(), generated.warnings(), request.input().request(), generated.travelDetails());
+                generated.budget(), generated.styles(), generated.days(), generated.source(), generated.warnings(), request.input().request(), generated.travelDetails()).withRequestMetadata(request.input().request(),generated.interpretedRequest());
         // If someone edited/finalized/joined during generation, reject rather than overwrite their newer version.
         return drafts.replaceGenerated(id, request.version(), replacement, user);
     }

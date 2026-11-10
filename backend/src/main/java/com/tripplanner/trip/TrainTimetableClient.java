@@ -35,7 +35,9 @@ public class TrainTimetableClient {
         if(key.isBlank()) throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,"TRAIN_NOT_CONFIGURED","기차 시간표 조회가 아직 준비되지 않았어요. 우선 승차권의 출발·도착 시각을 직접 선택해 주세요.");
         if(transport==null || transport.mode()!=TransportMode.KTX || date==null) throw ApiException.badRequest("여행 날짜와 기차 교통편을 선택해 주세요.");
         TravelSchedule.minute(transport.originTime());
-        String origin=station(transport.originLocation()),arrival=station(transport.arrivalLocation());
+        var boarding=transport.boardingStation()!=null?transport.boardingStation():transport.originLocation();
+        var alighting=transport.alightingStation()!=null?transport.alightingStation():transport.arrivalLocation();
+        String origin=station(boarding),arrival=station(alighting);
         if(origin.equals(arrival)) throw ApiException.badRequest("기차 출발역과 도착역을 다르게 선택해 주세요.");
         var body=pages("GetStrtpntAlocFndTrainInfo",Map.of("depPlaceId",origin,"arrPlaceId",arrival,"depPlandTime",date.format(DateTimeFormatter.BASIC_ISO_DATE)));
         List<TrainOption> result=new ArrayList<>();
@@ -47,8 +49,8 @@ public class TrainTimetableClient {
                 // Preserve calendar-day semantics. Cross-midnight trips need an explicit multi-day model.
                 if(!dep.toLocalDate().equals(date) || !arr.toLocalDate().equals(date) || !arr.isAfter(dep)
                         || dep.getHour()*60+dep.getMinute()<threshold) continue;
-                if(!stationKey(row.path("depplacename").asText()).equals(placeStation(transport.originLocation()))
-                    || !stationKey(row.path("arrplacename").asText()).equals(placeStation(transport.arrivalLocation()))) continue;
+                if(!stationKey(row.path("depplacename").asText()).equals(placeStation(boarding))
+                    || !stationKey(row.path("arrplacename").asText()).equals(placeStation(alighting))) continue;
                 String trainNo=row.path("trainno").asText("").trim(),type=row.path("traingradename").asText("").trim();
                 if(trainNo.isEmpty() || type.isEmpty()) continue;
                 String id=origin+"_"+arrival+"_"+trainNo+"_"+dep.format(STAMP)+"_"+arr.format(STAMP);

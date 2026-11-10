@@ -37,6 +37,7 @@ final class ConfirmedItineraryFallback {
         for (int n = 1; n <= request.days(); n++) {
             Area center = center(details, n, destination);
             List<AiPlace> seeds = new ArrayList<>(ExtraRequestRules.mealSeeds(input.request(),request.destination(),n,request.days()));
+            seeds.addAll(ExtraRequestRules.includeSeeds(input.request(),request.destination(),n,request.days()));
             if (candidate != null && candidate.days() != null) for (AiDay day : candidate.days()) {
                 if (day == null || day.dayNumber() != n) continue;
                 if (day.places() != null) day.places().stream().filter(Objects::nonNull).limit(6).forEach(seeds::add);
@@ -52,7 +53,11 @@ final class ConfirmedItineraryFallback {
                 String text = seed.searchQuery() == null || seed.searchQuery().isBlank() ? request.destination() + " " + seed.name() : seed.searchQuery();
                 Query query = new Query(text, center);
                 entries.add(new Seed(seed, query));
-                pending.computeIfAbsent(query, q -> pool.submit(() -> maps.search(q.text(), q.area(), 15)));
+                pending.computeIfAbsent(query, q -> pool.submit(() -> {
+                    List<PlaceHit> found=new ArrayList<>(maps.search(q.text(),q.area(),15));
+                    if(q.area()!=null) found.sort(Comparator.comparingDouble(h -> com.tripplanner.place.Geo.distanceMeters(q.area().lat(),q.area().lng(),h.lat(),h.lng())));
+                    return found;
+                }));
             }
             dailySeeds.add(entries);
         }
@@ -78,27 +83,38 @@ final class ConfirmedItineraryFallback {
             LinkedHashMap<String, AiPlace> recommendations = new LinkedHashMap<>();
             final int currentDay = n;
             // Round-robin prevents the first search query from crowding out other styles.
-            for (int rank = 0; rank < 8; rank++) for (Seed seed : dailySeeds.get(n - 1)) {
+            for (int rank = 0; rank < 15; rank++) for (Seed seed : dailySeeds.get(n - 1)) {
                 List<PlaceHit> result = hits.getOrDefault(seed.query(), List.of()).stream()
-                        .filter(h -> valid(h, seed.place(), seed.query().area()) && ExtraRequestRules.allows(input.request(), h.name(), seed.place().category())
+                        .filter(h -> valid(h, seed.place(), request.destination()) && ExtraRequestRules.allows(input.request(), h.name(), seed.place().category())
                             && ExtraRequestRules.allowsMealHit(input.request(),currentDay,request.days(),seed.place().name(),seed.place().category(),seed.place().reason()+" "+seed.place().searchQuery(),h.name(),h.categoryName())).toList();
                 if (rank >= result.size()) continue;
                 PlaceHit h = result.get(rank);
                 if (h == null || (reservedMeals.containsKey(h.placeId()) && reservedMeals.get(h.placeId())!=n)) continue;
                 String name = ItineraryRules.nameKey(h.name(), request.destination());
-                if (!valid(h, seed.place(), seed.query().area()) || usedIds.contains(h.placeId()) || usedNames.contains(name)
+                if (!valid(h, seed.place(), request.destination()) || usedIds.contains(h.placeId()) || usedNames.contains(name)
                         || known.containsKey(h.placeId()) || recommendations.values().stream().anyMatch(p -> ItineraryRules.nameKey(p.name(), request.destination()).equals(name))) continue;
+                List<ExtraRequestRules.Visit> counted=new ArrayList<>();
+                for(DayDraft previousDay:days) for(PlaceDraft previous:previousDay.places()) if(previous.fixedEventId()==null)
+                    counted.add(new ExtraRequestRules.Visit(previousDay.dayNumber(),previous.name(),previous.category()));
+                for(PlaceDraft current:known.values()) counted.add(new ExtraRequestRules.Visit(n,current.name(),current.category()));
+                if(!ExtraRequestRules.allowsAdditional(input.request(),h.name(),seed.place().category(),n,request.days(),counted)) continue;
                 var p = seed.place();
                 String time = p.visitTime() == null ? "10:00" : p.visitTime();
                 var confirmed = ExtraRequestRules.annotateMeal(new PlaceDraft(h.placeId(), h.name(), h.address(), h.lat(), h.lng(), time,
-                        "카카오맵에서 확인한 장소로 이동 가능한 시간대에 배치했습니다.", "영업시간·휴무는 방문 전 확인해 주세요.", p.category(), true, h.placeUrl(), h.phone(),null,h.categoryName()),input.request(),n,request.days());
+                        "카카오맵에서 확인한 장소로 이동 가능한 시간대에 배치했습니다.", "임시휴무는 방문 전 확인해주세요.", p.category(), true, h.placeUrl(), h.phone(),null,h.categoryName()),input.request(),n,request.days());
                 known.put(h.placeId(), confirmed);
                 recommendations.put(h.placeId(), new AiPlace(h.name(), h.placeId(), time, p.category(), confirmed.reason()+" "+Objects.toString(confirmed.categoryPath(),""), confirmed.note(), p.matchedStyles()));
             }
             if (candidatePool != null) candidatePool.put(n, List.copyOf(known.values()));
             // This day always exists even if the AI omitted it. Only real map results can populate it.
+            var remaining=new LinkedHashSet<>(request.styles());
+            for(var previousDay:days)for(var previous:previousDay.places()) {
+                var aiPlace=new AiPlace(previous.name(),previous.placeId(),previous.visitTime(),previous.category(),previous.reason(),previous.note(),request.styles());
+                remaining.removeAll(ItineraryRules.stylesFor(aiPlace));
+            }
+            var dailyRequest=new ItineraryRequest(request.destination(),request.startDate(),request.days(),request.budget(),List.copyOf(remaining),request.extraRequest(),details);
             var planned = ItineraryScheduler.prepareBestEffort(new AiItinerary("초안", List.of(new AiDay(n, List.of(),
-                    recommendations.values().stream().limit(32).toList()))), request).days().get(0);
+                    recommendations.values().stream().limit(32).toList()))), dailyRequest).days().get(0);
             List<PlaceDraft> output = new ArrayList<>();
             Set<String> covered = new HashSet<>();
             for (AiPlace p : planned.places()) {
@@ -109,8 +125,6 @@ final class ConfirmedItineraryFallback {
                 usedIds.add(found.placeId()); usedNames.add(ItineraryRules.nameKey(found.name(), request.destination()));
                 covered.addAll(ItineraryRules.stylesFor(p));
             }
-            Set<String> missing = new LinkedHashSet<>(request.styles()); missing.removeAll(covered);
-            if (!missing.isEmpty()) warnings.add(n + "일차: 시간과 확인된 후보의 제약으로 " + String.join(", ", missing) + " 스타일을 충분히 반영하지 못했습니다.");
             if (output.isEmpty()) warnings.add(n + "일차: 추가 방문을 배치할 시간이 부족하거나 확인된 후보를 찾지 못해 고정 일정만 남겼습니다.");
             int evening = TravelSchedule.eveningStart(n, request.days(), details, events);
             if (evening >= 0 && output.stream().noneMatch(p -> TravelSchedule.minute(p.visitTime()) >= evening))
@@ -152,12 +166,11 @@ final class ConfirmedItineraryFallback {
         String term = category.equals("식당") ? "(식당|맛집|식사)" : java.util.regex.Pattern.quote(category);
         return extra.matches("(?s).*" + term + "\\s*(은|는|을|를)?\\s*(제외|빼|말고|없이|안\\s*가).*" );
     }
-    private static boolean valid(PlaceHit h, AiPlace p, Area area) {
+    private static boolean valid(PlaceHit h, AiPlace p, String destination) {
         if (h == null || h.placeId() == null || h.placeId().isBlank() || h.name() == null || h.name().isBlank() || h.name().length() > 200
                 || !Double.isFinite(h.lat()) || !Double.isFinite(h.lng()) || Math.abs(h.lat()) > 90 || Math.abs(h.lng()) > 180) return false;
         if (!com.tripplanner.place.PlaceCategories.matches(p.category(), h)) return false;
-        if (h.distanceMeters() != null && h.distanceMeters() > 60_000) return false;
-        return area == null || com.tripplanner.place.Geo.distanceMeters(area.lat(), area.lng(), h.lat(), h.lng()) <= 60_000;
+        return com.tripplanner.place.DestinationRegions.contains(destination, h.address());
     }
     private static ApiException unavailable() {
         return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "PLACES_UNAVAILABLE", "카카오맵에서 확인된 장소를 찾지 못했습니다. 지도 검색 상태와 목적지를 확인해 주세요.");

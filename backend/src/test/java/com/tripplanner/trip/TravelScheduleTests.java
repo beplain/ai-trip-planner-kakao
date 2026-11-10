@@ -33,6 +33,13 @@ class TravelScheduleTests {
         assertEquals("18:30", days.get(1).places().stream().filter(p -> p.fixedEventId().equals("transport:boarding")).findFirst().orElseThrow().visitTime());
         assertTrue(days.get(1).places().stream().anyMatch(p -> p.name().contains("맡긴 짐 찾기")));
     }
+    @Test void conflictingCheckInErrorIdentifiesTheEventAndArrivalBoundary() {
+        var d=new TravelDetails(MovementMode.CAR,List.of(new Stay("숙소","부산",1,2,"15:00","11:00",LuggagePlan.CARRY,LuggagePlan.CARRY)),
+            new Transport(TransportMode.KTX,"부산역","15:10","부산역","19:00"));
+        var error=assertThrows(ApiException.class,()->TravelSchedule.validate(d,2));
+        assertTrue(error.getMessage().contains("1일차 숙소 체크인"));
+        assertTrue(error.getMessage().contains("15:00"));assertTrue(error.getMessage().contains("15:40"));
+    }
     @Test void blocksVisitsBeforeArrivalDuringCheckInAndAfterReturnBoundary() {
         var d = details(); var events = TravelSchedule.events(d, 2);
         assertFalse(TravelSchedule.allowed(1, 2, 9 * 60, d, events));

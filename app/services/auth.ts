@@ -5,7 +5,7 @@ import { Platform } from 'react-native';
 
 import { API_BASE_URL, api } from './api';
 
-export type User = { id: number; email?: string; name: string; calendarConnected?: boolean };
+export type User = { id: number; email?: string; name: string };
 type TokenResponse = { accessToken: string; expiresInSeconds: number; user: User };
 
 const TOKEN_KEY = 'tripplanner.accessToken';
@@ -35,10 +35,10 @@ export const tokenStore = {
  * 3) code를 서버에 보내 앱용 JWT로 교환
  * 사용자가 취소하면 null
  */
-export async function signInWithKakao(calendar = false): Promise<TokenResponse | null> {
+export async function signInWithKakao(): Promise<TokenResponse | null> {
   if (!API_BASE_URL) throw new Error('지금은 로그인할 수 없어요. 잠시 후 다시 시도해 주세요.');
   const redirect = Linking.createURL('auth');
-  const startUrl = `${API_BASE_URL}/api/auth/kakao/start?redirect=${encodeURIComponent(redirect)}${calendar ? '&calendar=true' : ''}`;
+  const startUrl = `${API_BASE_URL}/api/auth/kakao/start?redirect=${encodeURIComponent(redirect)}`;
   const result = await WebBrowser.openAuthSessionAsync(startUrl, redirect);
   if (result.type !== 'success') return null;
 

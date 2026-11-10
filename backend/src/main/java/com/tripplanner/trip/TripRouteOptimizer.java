@@ -13,6 +13,9 @@ final class TripRouteOptimizer {
     }
 
     static TripDraft optimize(TripDraft draft, java.util.function.ToDoubleBiFunction<PlaceDraft, PlaceDraft> cost) {
+        return optimize(draft,cost,(p,time)->true);
+    }
+    static TripDraft optimize(TripDraft draft, java.util.function.ToDoubleBiFunction<PlaceDraft, PlaceDraft> cost, java.util.function.BiPredicate<PlaceDraft,String> eligible) {
         List<DayDraft> days = new ArrayList<>();
         for (DayDraft day : draft.days()) {
             List<PlaceDraft> route = new ArrayList<>(day.places());
@@ -28,13 +31,14 @@ final class TripRouteOptimizer {
                     for (int j = i + 1; j < route.size(); j++) {
                         if (route.get(j).fixedEventId() != null) break;
                         PlaceDraft a = route.get(i), b = route.get(j);
-                        if (!known(a) || !known(b) || !fits(a, b.visitTime(), originalTimes)
+                        if (!known(a) || !known(b) || !eligible.test(a,b.visitTime()) || !eligible.test(b,a.visitTime()) || !fits(a, b.visitTime(), originalTimes)
                                 || !fits(b, a.visitTime(), originalTimes)
-                                || !ExtraRequestRules.mealTimeAllowed(a,b.visitTime(),draft.request(),day.dayNumber(),draft.days().size())
-                                || !ExtraRequestRules.mealTimeAllowed(b,a.visitTime(),draft.request(),day.dayNumber(),draft.days().size())) continue;
+                                || !ExtraRequestRules.mealTimeAllowed(a,b.visitTime(),draft.effectiveRequest(),day.dayNumber(),draft.days().size())
+                                || !ExtraRequestRules.mealTimeAllowed(b,a.visitTime(),draft.effectiveRequest(),day.dayNumber(),draft.days().size())) continue;
                         PlaceDraft movedA = at(a, b.visitTime()), movedB = at(b, a.visitTime());
                         route.set(i, movedB); route.set(j, movedA);
-                        if(!ExtraRequestRules.lastRestaurantsSatisfied(draft.request(),day.dayNumber(),draft.days().size(),route)) {
+                        if((route.stream().anyMatch(DraftMealPlanner::scheduledMeal) && !DraftMealPlanner.validOrder(route))
+                                || !ExtraRequestRules.lastRestaurantsSatisfied(draft.effectiveRequest(),day.dayNumber(),draft.days().size(),route)) {
                             route.set(i,a); route.set(j,b); continue;
                         }
                         double next = distance(route, draft.travelDetails(), day.dayNumber(), cost);
@@ -50,11 +54,12 @@ final class TripRouteOptimizer {
             days.add(new DayDraft(day.dayNumber(), day.date(), List.copyOf(route)));
         }
         return new TripDraft(draft.title(), draft.destination(), draft.startDate(), draft.endDate(), draft.budget(),
-                draft.styles(), days, draft.source(), draft.warnings(), draft.request(), draft.travelDetails());
+                draft.styles(), days, draft.source(), draft.warnings(), draft.request(), draft.travelDetails()).withRequestMetadata(draft.request(),draft.interpretedRequest());
     }
 
     static boolean fits(PlaceDraft p, String slot, Map<PlaceDraft, Integer> original) {
         if (slot == null || !original.containsKey(p)) return false;
+        if (DraftMealPlanner.scheduledMeal(p)) return true;
         int time = TravelSchedule.minute(slot);
         String text = Objects.toString(p.name(), "") + Objects.toString(p.reason(), "") + Objects.toString(p.note(), "");
         if (!text.contains("마지막 식당 식사 요청:") && text.matches("(?s).*(저녁|디너).*" ) && time < 17 * 60) return false;
@@ -66,7 +71,7 @@ final class TripRouteOptimizer {
 
     static PlaceDraft at(PlaceDraft p, String time) {
         return new PlaceDraft(p.placeId(), p.name(), p.address(), p.latitude(), p.longitude(), time,
-                p.reason(), p.note(), p.category(), p.verified(), p.placeUrl(), p.phone(), p.fixedEventId(), p.categoryPath());
+                p.reason(), p.note(), p.category(), p.verified(), p.placeUrl(), p.phone(), p.fixedEventId(), p.categoryPath()).withBusinessHours(p.businessHours());
     }
 
     static boolean known(PlaceDraft p) {

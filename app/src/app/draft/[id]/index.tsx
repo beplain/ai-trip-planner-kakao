@@ -1,5 +1,5 @@
+import { ItineraryDay } from '@/components/itinerary-day';
 import { TransportDeparture, TransportReturnArrival } from '@/components/transport-departure';
-import { userMessage } from '../../../../services/user-message';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Share, Text, View } from 'react-native';
@@ -17,7 +17,6 @@ import { useDragScroll } from '@/hooks/use-drag-scroll';
 import { reorderItems } from '@/lib/reorder';
 import { RequireAuth } from '@/components/require-auth';
 import { ScreenHeader } from '@/components/screen-header';
-import { TalkCalendarConnection } from '@/components/talk-calendar';
 import { draftOptionLabel, dateRange, formatBudget, ROLE_LABEL, shareText, shortDate } from '@/lib/format';
 import { C, DAY_COLORS, s } from '@/lib/styles';
 
@@ -94,7 +93,6 @@ function DraftScreen() {
     lock.current = true; setBusy(true);
     try {
       const trip = await draftsApi.save(id, snapshot.version);
-      if (trip.calendar && trip.calendar.status !== 'CREATED') Alert.alert('여행은 저장됐어요', userMessage(trip.calendar.message));
       router.replace(`/trip/${trip.id}`);
     } catch (e) {
       Alert.alert('저장 실패', apiError(e));
@@ -105,7 +103,7 @@ function DraftScreen() {
   function deleteDraft() {
     const snapshot = current.current;
     if (!snapshot || snapshot.myRole !== 'OWNER' || lock.current || syncingRef.current || dragScroll.isDragging() || memoOpen.current) return;
-    Alert.alert('초안 삭제', '이 여행의 모든 초안 유형을 삭제할까요? 동행자의 목록에서도 사라지고 초대 링크도 사용할 수 없게 됩니다.', [
+    Alert.alert('초안 삭제', '정말 이 여행 계획을 삭제하시겠습니까? 모든 초안 유형이 삭제되며 되돌릴 수 없습니다. 동행자의 목록에서도 사라지고 초대 링크도 사용할 수 없게 됩니다.', [
       { text: '취소', style: 'cancel' },
       { text: '삭제', style: 'destructive', onPress: () => { void removeDraft(snapshot); } },
     ]);
@@ -166,7 +164,6 @@ function DraftScreen() {
             <Text style={[s.outlineText, { color: C.danger }]}>여행 계획 삭제</Text>
           </Pressable>}
           {!!error && <Text style={s.warnText}>{error}</Text>}
-          {!!draft.warnings?.length && <View style={s.warnBox}>{draft.warnings.map((w, i) => <Text key={i} style={s.warnText}>• {userMessage(w)}</Text>)}</View>}
           <View style={s.memberBox}>
             <Text style={s.sectionTitleSmall}>함께 계획하는 동행자 {companions.length}명</Text>
             {companions.length === 0 && <Text style={s.mutedSmall}>아직 참여한 동행자가 없어요.</Text>}
@@ -187,18 +184,25 @@ function DraftScreen() {
           </View>}
           <View style={draft.options?.length ? { padding: 12 } : undefined}>
           {!!draft.options?.length && <Text style={s.mutedSmall}>{option?.description ?? draft.options.find((entry) => entry.id === draft.selectedOption)?.description}</Text>}
-          {draft.days.map((day, dayIdx) => <View key={day.dayNumber}>
-            <Text style={[s.dayLabel, { color: DAY_COLORS[dayIdx % DAY_COLORS.length] }]}>DAY {day.dayNumber}{day.date ? ` · ${shortDate(day.date)}` : ''}</Text>
+          {draft.days.map((day, dayIdx) => <ItineraryDay key={day.dayNumber}
+            title={`DAY ${day.dayNumber}${day.date ? ` · ${shortDate(day.date)}` : ''}`}
+            color={DAY_COLORS[dayIdx % DAY_COLORS.length]} disabled={dragging || busy || syncing}>
             <TransportDeparture value={draft.travelDetails} dayNumber={day.dayNumber} color={DAY_COLORS[dayIdx % DAY_COLORS.length]} />
-              <DraggablePlaces places={day.places} color={DAY_COLORS[dayIdx % DAY_COLORS.length]} editable={canEdit} busy={busy || syncing} scroll={dragScroll}
+              <DraggablePlaces visitDate={day.date} places={day.places} color={DAY_COLORS[dayIdx % DAY_COLORS.length]} editable={canEdit} busy={busy || syncing} scroll={dragScroll}
               onReorder={(from, to) => updatePlaces(dayIdx, (places) => reorderItems(places, from, to).map((p, i) => draft.travelDetails ? { ...p, visitTime: places[i].visitTime } : p))}
-              onDelete={(_p, i) => updatePlaces(dayIdx, (places) => places.filter((_, j) => i !== j))}
+              onDelete={(place, i) => {
+                const version = current.current?.version;
+                Alert.alert('장소 삭제', `정말 ${place.name} 일정을 삭제하시겠습니까?`, [
+                  { text: '취소', style: 'cancel' },
+                  { text: '삭제', style: 'destructive', onPress: () => updatePlaces(dayIdx, (places) => places.filter((_, j) => i !== j), version) },
+                ]);
+              }}
               onEditMemo={(_p, i) => { memoOpen.current = true; setMemo({ day: dayIdx, index: i, version: room!.version }); }} />
             <TransportReturnArrival value={draft.travelDetails} dayNumber={day.dayNumber} dayCount={draft.days.length} color={DAY_COLORS[dayIdx % DAY_COLORS.length]} />
-          </View>)}
+          </ItineraryDay>)}
           </View>
           </View>
-          {room?.myRole !== 'VIEWER' && <><TalkCalendarConnection /><Pressable accessibilityRole="button" disabled={busy || syncing || dragging} style={[s.primary, (busy || syncing || dragging) && s.disabled]} onPress={() => { void save(); }}><Text style={s.primaryText}>{busy ? '반영 중…' : '이 일정 확정하기'}</Text></Pressable></>}
+          {room?.myRole !== 'VIEWER' && <Pressable accessibilityRole="button" disabled={busy || syncing || dragging} style={[s.primary, (busy || syncing || dragging) && s.disabled]} onPress={() => { void save(); }}><Text style={s.primaryText}>{busy ? '반영 중…' : '이 일정 확정하기'}</Text></Pressable>}
         </ScrollView>
       )}
       <MemoModal visible={!!memoPlace} title={memoPlace?.name ?? ''} initialTime={memoPlace?.visitTime} initialNote={memoPlace?.note}

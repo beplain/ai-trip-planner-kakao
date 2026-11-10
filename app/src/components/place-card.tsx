@@ -1,12 +1,15 @@
+import { ItineraryDisclosure } from './itinerary-disclosure';
 import { userMessage } from '../../services/user-message';
 import { Linking, Pressable, Text, View } from 'react-native';
 
 import type { Place } from '../../services/trips';
+import { businessHoursNotice } from '../../services/business-hours';
 import { openDirections, openPlacePage } from '@/lib/kakao-map';
 import { C, s } from '@/lib/styles';
 
 type Props = {
   place: Place;
+  visitDate?: string;
   index: number;
   isLast: boolean;
   color?: string;
@@ -16,23 +19,28 @@ type Props = {
   onEditMemo?: () => void;
 };
 
-export function PlaceCard({ place, index, isLast, color = C.primary, editable, busy, onDelete, onEditMemo }: Props) {
+export function PlaceCard({ place, visitDate, index, isLast, color = C.primary, editable, busy, onDelete, onEditMemo }: Props) {
+  const hours = businessHoursNotice(place, visitDate);
   return (
     <View style={s.placeCard}>
       <View style={s.timeline}>
         <View style={[s.dot, { backgroundColor: color }]} />
         {!isLast && <View style={s.line} />}
       </View>
-      <View style={s.placeBody}>
+      <ItineraryDisclosure key={`${place.fixedEventId ?? place.placeId ?? place.id ?? place.name}`} name={place.name} summary={<>
         <Text style={[s.placeTime, { color }]}>{place.visitTime ? `${place.visitTime} · ` : ''}장소 {index + 1}{place.category ? ` · ${place.category}` : ''}</Text>
         {!!place.fixedEventId && !place.fixedEventId.startsWith('stay:') && <Text style={[s.badgeText, { color: C.primary }]}>고정 일정 · 여행 정보에서 변경</Text>}
         <Text style={s.placeName}>{place.name}</Text>
         {!!place.address && <Text style={s.placeAddr}>{place.address}</Text>}
+        </>}>
         <View style={[s.badge, { backgroundColor: place.verified ? '#E7F6EE' : C.warnBg }]}>
           <Text style={[s.badgeText, { color: place.verified ? C.ok : C.warnText }]}>
             {place.fixedEventId ? place.verified ? '카카오맵에서 선택한 장소' : '사용자가 지정한 고정 일정' : place.verified ? '카카오맵에서 확인된 장소' : '지도 미확인 · 방문 전 확인 필요'}
           </Text>
         </View>
+        {!place.fixedEventId && <View style={{ marginTop: 6 }}>
+          <Text style={[s.mutedSmall, { color: hours.verified ? C.ok : C.warnText }]}>{hours.label}</Text>
+        </View>}
         {!!place.reason && <Text style={s.placeNote}>{place.reason}</Text>}
         {!!place.note && <Text style={s.placeNote}>💡 {place.note.startsWith('샘플 일정입니다. AI 키') ? userMessage(place.note) : place.note}</Text>}
 
@@ -54,8 +62,7 @@ export function PlaceCard({ place, index, isLast, color = C.primary, editable, b
             </Pressable>
           )}
         </View>
-        <Text style={[s.mutedSmall, { marginTop: 6 }]}>영업시간·휴무·예약은 카카오맵 상세에서 방문 전 확인해 주세요.</Text>
-      </View>
+      </ItineraryDisclosure>
     </View>
   );
 }

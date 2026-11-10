@@ -35,7 +35,7 @@ function selectPoint(pos){
       post({type:'selection-error',message:'이 지점의 국내 지역을 확인하지 못했어요. 육지의 다른 지점을 선택해 주세요.'});return;
     }
     var area=result.find(function(r){return r.region_type==='B';}) || result[0];
-    var destination=area.region_1depth_name || '';
+    var destination=[area.region_1depth_name,area.region_2depth_name].filter(Boolean).join(' ');
     if(!destination){post({type:'selection-error',message:'지역명을 확인하지 못했어요. 다른 지점을 선택해 주세요.'});return;}
     post({type:'selected',destination:destination,latitude:pos.getLat(),longitude:pos.getLng()});
   });

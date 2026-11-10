@@ -12,6 +12,18 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.hamcrest.Matchers.containsString;
 
 class RouteTimeClientTests {
+    @Test void walkingWorksWithoutKeysOrHttpAndUsesWalkingDistanceEstimate() {
+        var builder=RestClient.builder();var server=MockRestServiceServer.bindTo(builder).build();
+        var client=new RouteTimeClient("","",0,builder.build());
+        try {
+            var session=client.session(MovementMode.WALK);var a=p("a",129,"10:00");var b=p("b",129.01,"12:00");
+            assertTrue(session.enabled());session.prefetch(List.of(List.of(a,b)));
+            int expected=(int)Math.ceil(com.tripplanner.place.Geo.distanceMeters(a.latitude(),a.longitude(),b.latitude(),b.longitude())*1.3/4000*60);
+            assertEquals(expected,session.minutes(a,b).getAsInt());assertEquals(0,session.minutes(a,a).getAsInt());
+            assertFalse(session.incomplete());server.verify();
+            assertTrue(TravelSchedule.prompt(new TravelDetails(MovementMode.WALK,List.of(),null),1).contains("도보"));
+        }finally{client.shutdown();}
+    }
     @Test void independentLegsRunConcurrentlyWithoutDuplicatingOrExceedingBudget() {
         var builder = RestClient.builder(); var server = MockRestServiceServer.bindTo(builder).build();
         var arrived = new java.util.concurrent.CountDownLatch(3);

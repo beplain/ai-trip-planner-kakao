@@ -8,7 +8,7 @@ import java.util.*;
 final class DraftVariants {
     private DraftVariants() {}
     static TripDraft withDays(TripDraft d,List<DayDraft> days,List<String> warnings,List<StoredDraftOption> options,String selected) {
-        return new TripDraft(d.title(),d.destination(),d.startDate(),d.endDate(),d.budget(),d.styles(),days,d.source(),warnings,d.request(),d.travelDetails(),options,selected);
+        return new TripDraft(d.title(),d.destination(),d.startDate(),d.endDate(),d.budget(),d.styles(),days,d.source(),warnings,d.request(),d.travelDetails(),options,selected,d.interpretedRequest());
     }
     static void validate(TripDraft draft) {
         TravelSchedule.validateDraft(draft);

@@ -24,16 +24,6 @@ public class User {
     @Column(nullable = false)
     private Instant createdAt;
 
-    @Column(length = 8192)
-    private String kakaoTokenBundle;
-    private boolean kakaoCalendarConnected;
-
-    public boolean isKakaoCalendarConnected() { return kakaoCalendarConnected; }
-    public void setKakaoCalendarConnected(boolean connected) { this.kakaoCalendarConnected = connected; }
-
-    public String getKakaoTokenBundle() { return kakaoTokenBundle; }
-    public void setKakaoTokenBundle(String encrypted) { this.kakaoTokenBundle = encrypted; }
-
     protected User() {}
 
     public User(String authSubject, String email, String name) {

@@ -13,7 +13,7 @@ import { TripPeriodInput } from '@/components/trip-period-input';
 import { DestinationInput } from '@/components/destination-input';
 import { RequireAuth } from '@/components/require-auth';
 import { ScreenHeader } from '@/components/screen-header';
-import { STYLE_OPTIONS, formatBudget, tripDayCount } from '@/lib/format';
+import { styleLabel, STYLE_OPTIONS, formatBudget, tripDayCount } from '@/lib/format';
 import { destinationRegion } from '@/lib/destination-region';
 import { C, s } from '@/lib/styles';
 
@@ -41,7 +41,7 @@ function CreateScreen() {
   async function generate() {
     const dest = destinationRegion(destination);
     const dayCount = tripDayCount(startDate, endDate);
-    if (!dest) return Alert.alert('목적지를 선택해 주세요', '예: 경기도, 서울특별시, 강원특별자치도');
+    if (!dest) return Alert.alert('목적지를 선택해 주세요', '예: 경주, 양양, 서울특별시');
     if (dayCount < 1 || dayCount > 7) return Alert.alert('여행 기간을 선택해 주세요', '캘린더에서 시작일과 종료일을 선택해 주세요. 최대 7일까지 가능합니다.');
     const detailsError = travelDetailsError(travelDetails, dayCount, startDate);
     if (detailsError) return Alert.alert('숙소·교통 정보를 확인해 주세요', detailsError);
@@ -105,7 +105,7 @@ function CreateScreen() {
         <View style={s.chips}>
           {STYLE_OPTIONS.map((item) => (
             <Pressable key={item} onPress={() => toggleStyle(item)} style={[s.chip, styles.includes(item) && s.chipActive]}>
-              <Text style={[s.chipText, styles.includes(item) && s.chipTextActive]}>{item}</Text>
+              <Text style={[s.chipText, styles.includes(item) && s.chipTextActive]}>{styleLabel(item)}</Text>
             </Pressable>
           ))}
         </View>

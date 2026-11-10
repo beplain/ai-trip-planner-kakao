@@ -11,10 +11,9 @@ import java.util.List;
 @RequestMapping("/api/drafts")
 public class DraftController {
     private final DraftRooms drafts;
-    private final TalkCalendarService calendar;
     private final DraftRegenerationService regeneration;
-    public DraftController(DraftRooms drafts, TalkCalendarService calendar, DraftRegenerationService regeneration) {
-        this.drafts = drafts; this.calendar = calendar; this.regeneration = regeneration;
+    public DraftController(DraftRooms drafts, DraftRegenerationService regeneration) {
+        this.drafts = drafts; this.regeneration = regeneration;
     }
     @PostMapping("/{id}/regenerate")
     public DraftRooms.RoomResponse regenerate(@AuthenticationPrincipal Jwt jwt, @PathVariable String id,
@@ -35,6 +34,11 @@ public class DraftController {
         return drafts.create(draft, CurrentUser.id(jwt));
     }
     @GetMapping public List<DraftRooms.RoomResponse> list(@AuthenticationPrincipal Jwt jwt) { return drafts.list(CurrentUser.id(jwt)); }
+    @GetMapping("/summaries")
+    public List<DraftRooms.RoomSummary> summaries(@AuthenticationPrincipal Jwt jwt) {
+        return drafts.summaries(CurrentUser.id(jwt));
+    }
+
     @GetMapping("/{id}") public DraftRooms.RoomResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable String id) { return drafts.get(id, CurrentUser.id(jwt)); }
     @DeleteMapping("/{id}")
     @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
@@ -54,8 +58,7 @@ public class DraftController {
         return drafts.update(id, update, CurrentUser.id(jwt));
     }
     @PostMapping("/{id}/save") public TripDtos.TripResponse save(@AuthenticationPrincipal Jwt jwt, @PathVariable String id, @Valid @RequestBody DraftRooms.Save save) {
-        var trip = drafts.save(id, save.version(), CurrentUser.id(jwt));
-        return trip.withCalendar(calendar.syncAfterSave(trip.id(), CurrentUser.id(jwt)));
+        return drafts.save(id, save.version(), CurrentUser.id(jwt));
     }
     @PostMapping("/{id}/invites") public TripDtos.InviteResponse invite(@AuthenticationPrincipal Jwt jwt, @PathVariable String id, @Valid @RequestBody TripDtos.CreateInviteRequest request) {
         return drafts.invite(id, request.role(), CurrentUser.id(jwt));

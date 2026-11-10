@@ -25,6 +25,12 @@ management:
         include: health
 
 app:
+  google-places:
+    api-key: ${GOOGLE_PLACES_API_KEY:}
+    max-calls: ${GOOGLE_PLACES_MAX_CALLS:100}
+  tourism:
+    service-key: ${TOUR_API_SERVICE_KEY:}
+    max-calls: ${TOUR_API_MAX_CALLS:40}
   jwt:
     # 32바이트 이상 임의 문자열. 운영에서는 반드시 환경변수로 교체
     secret: ${APP_JWT_SECRET:change-me-to-a-long-random-secret-at-least-32-bytes!!}
@@ -46,6 +52,7 @@ app:
     api-key: ${OPENAI_API_KEY:}
     model: ${OPENAI_MODEL:gpt-4o-mini}
     base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+    reasoning-effort: ${OPENAI_REASONING_EFFORT:low}
   # 비워 두면 요청 주소(ngrok의 X-Forwarded 헤더 포함)로 자동 계산
   public-base-url: ${APP_PUBLIC_BASE_URL:}
   # 개발용 로그인(POST /api/auth/dev). 운영에서는 false

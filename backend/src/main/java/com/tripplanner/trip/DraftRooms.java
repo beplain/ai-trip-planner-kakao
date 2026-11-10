@@ -1,6 +1,8 @@
 package com.tripplanner.trip;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.JsonToken;
+import java.io.IOException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tripplanner.common.ApiException;
@@ -20,9 +22,12 @@ import java.util.*;
 public class DraftRooms {
     public record RoomResponse(String id, long version, TripDraft draft, List<MemberResponse> members,
                                MemberRole myRole, Long savedTripId, Instant expiresAt) {}
+    public record RoomSummary(String id, String title, String destination, long companionCount) {}
     public record Update(@NotNull Long version, @NotNull @Valid TripDraft draft) {}
     public record Save(@NotNull Long version) {}
     public record Joined(String draftId, Long savedTripId) {}
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private GoogleHoursScheduler editHours;
     private final UserRepository users;
     private final TripService trips;
     private final DraftDocumentRepository rooms;
@@ -45,6 +50,42 @@ public class DraftRooms {
                 .map(r -> response(r, user)).toList();
     }
     @Transactional(readOnly = true)
+    public List<RoomSummary> summaries(Long user) {
+        Map<String, Long> visible = new LinkedHashMap<>();
+        for (var row : rooms.findActiveMemberships()) {
+            List<MemberResponse> members = decode(row.getParticipants(), new TypeReference<>() {});
+            if (members.stream().anyMatch(member -> user.equals(member.userId()))) {
+                visible.put(row.getId(), members.stream().filter(member -> member.role() != MemberRole.OWNER).count());
+            }
+        }
+        if (visible.isEmpty()) return List.of();
+        Map<String, RoomSummary> summaries = new HashMap<>();
+        for (var row : rooms.findActiveContents(List.copyOf(visible.keySet()))) {
+            summaries.put(row.getId(), summarize(row.getId(), row.getContent(), visible.get(row.getId())));
+        }
+        return visible.keySet().stream().map(summaries::get).filter(Objects::nonNull).toList();
+    }
+
+    private RoomSummary summarize(String id, String content, long companionCount) {
+        try (var parser = json.getFactory().createParser(content)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) throw new IllegalStateException("초안 형식 오류");
+            String title = null;
+            String destination = null;
+            while (parser.nextToken() == JsonToken.FIELD_NAME) {
+                String field = parser.currentName();
+                parser.nextToken();
+                if ("title".equals(field)) title = parser.getValueAsString();
+                else if ("destination".equals(field)) destination = parser.getValueAsString();
+                else parser.skipChildren();
+                if (title != null && destination != null) return new RoomSummary(id, title, destination, companionCount);
+            }
+            throw new IllegalStateException("초안 제목 또는 목적지 누락");
+        } catch (IOException e) {
+            throw new IllegalStateException("초안 요약 읽기 실패", e);
+        }
+    }
+
+    @Transactional(readOnly = true)
     public RoomResponse get(String id, Long user) { var r = room(id, false); requireMember(r, user); return response(r, user); }
     public RoomResponse update(String id, Update update, Long user) {
         var r = room(id, true); requireEditor(r, user); check(r, update.version());
@@ -56,6 +97,19 @@ public class DraftRooms {
                 || !Objects.equals(before.selectedOption(), after.selectedOption()))
             throw ApiException.badRequest("여행 정보는 '여행 정보 수정'에서 변경해 주세요.");
         TravelSchedule.validateDraft(after);
+        if(editHours!=null) {
+            var session=editHours.session();
+            var edited=after;
+            var days=edited.days().stream().map(day->new DayDraft(day.dayNumber(),day.date(),day.places().stream().map(p->{
+                var previous=before.days().stream().filter(d->Objects.equals(d.date(),day.date()))
+                    .flatMap(d->d.places().stream()).filter(old->Objects.equals(old.placeId(),p.placeId())
+                        && Objects.equals(old.name(),p.name()) && Objects.equals(old.address(),p.address())
+                        && Objects.equals(old.visitTime(),p.visitTime())).findFirst();
+                return previous.isPresent()?p.withBusinessHours(previous.get().businessHours()):session.checkEdited(p,
+                    day.date()!=null?day.date():edited.startDate()==null?null:edited.startDate().plusDays(day.dayNumber()-1));
+            }).toList())).toList();
+            after=DraftVariants.withDays(after,days,after.warnings(),after.options(),after.selectedOption());
+        }
         var updated = DraftVariants.updateCurrent(before, after.days(), after.warnings());
         r.edit(encode(updated)); rooms.flush(); return response(r, user);
     }
@@ -63,7 +117,7 @@ public class DraftRooms {
         var r = room(id, true); requireEditor(r, user); check(r, request.version());
         var before = content(r);
         var renamed = new TripDraft(request.title().trim(), before.destination(), before.startDate(), before.endDate(),
-                before.budget(), before.styles(), before.days(), before.source(), before.warnings(), before.request(), before.travelDetails(), before.options(), before.selectedOption());
+                before.budget(), before.styles(), before.days(), before.source(), before.warnings(), before.request(), before.travelDetails(), before.options(), before.selectedOption(), before.interpretedRequest());
         r.edit(encode(renamed)); rooms.flush(); return response(r, user);
     }
     public RoomResponse switchOption(String id, SwitchDraftOptionRequest request, Long user) {
@@ -166,7 +220,7 @@ public class DraftRooms {
         return new TripDraft(t.title(), t.destination(), t.startDate(), t.endDate(), t.budget(), t.styles(),
                 t.days().stream().map(d -> new DayDraft(d.dayNumber(), d.date(), d.places().stream().map(p ->
                         new PlaceDraft(p.placeId(), p.name(), p.address(), p.latitude(), p.longitude(), p.visitTime(), p.reason(),
-                                p.note(), p.category(), p.verified(), p.placeUrl(), p.phone(), p.fixedEventId())).toList())).toList(), null, List.of(), null, t.travelDetails());
+                                p.note(), p.category(), p.verified(), p.placeUrl(), p.phone(), p.fixedEventId()).withBusinessHours(p.businessHours())).toList())).toList(), null, List.of(), null, t.travelDetails());
     }
     private TripDraft content(DraftDocument r) { return decode(r.getContent(), new TypeReference<TripDraft>() {}); }
     private List<MemberResponse> participants(DraftDocument r) { return decode(r.getParticipants(), new TypeReference<List<MemberResponse>>() {}); }

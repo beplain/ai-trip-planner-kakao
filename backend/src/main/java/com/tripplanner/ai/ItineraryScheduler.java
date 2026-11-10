@@ -30,6 +30,7 @@ public final class ItineraryScheduler {
         int requestStart = ExtraRequestRules.visitStart(request.extraRequest(),0);
         int requestEnd = ExtraRequestRules.visitEnd(request.extraRequest(),1440);
         List<AiDay> days = new ArrayList<>();
+        Set<String> tripCovered = new HashSet<>();
         for (AiDay day : input.days()) {
             if (day == null || day.places() == null || day.dayNumber() < 1 || day.dayNumber() > request.days()) {
                 days.add(day); continue; // Structural errors must be retried, not fabricated into missing days.
@@ -51,6 +52,11 @@ public final class ItineraryScheduler {
                 } catch (RuntimeException e) { fits = false; }
             }
             var required = new LinkedHashSet<>(request.styles() == null ? List.<String>of() : request.styles());
+            required.removeAll(tripCovered);
+            var available = new HashSet<String>();
+            ordinary.forEach(p -> available.addAll(ItineraryRules.stylesFor(p)));
+            alternatives.forEach(p -> available.addAll(ItineraryRules.stylesFor(p)));
+            required.retainAll(available);
             var covered = new HashSet<String>(); ordinary.forEach(p -> covered.addAll(ItineraryRules.stylesFor(p)));
             int evening = TravelSchedule.eveningStart(day.dayNumber(), request.days(), details, events);
             boolean hasEvening = evening < 0 || ordinary.stream().anyMatch(p -> {
@@ -60,8 +66,8 @@ public final class ItineraryScheduler {
                 var mealCandidates=m.lastRestaurant()?ordinary.stream().filter(p->"식당".equals(p.category())).reduce((a,b)->b).map(List::of).orElse(List.of()):ordinary;
                 return mealCandidates.stream().anyMatch(p->m.claims(p.name(),p.category(),p.reason()+" "+p.searchQuery()) && m.containsTime(p.visitTime()));
             });
-            if (fits && hasMeals && hasEvening && covered.containsAll(required) && ordinary.size() <= requestLimit) {
-                days.add(new AiDay(day.dayNumber(), ordinary, alternatives)); continue;
+            if (fits && ExtraRequestRules.includesSatisfied(request.extraRequest(),day.dayNumber(),request.days(),ordinary) && hasMeals && hasEvening && covered.containsAll(required) && ordinary.size() <= requestLimit) {
+                days.add(new AiDay(day.dayNumber(), ordinary, alternatives)); tripCovered.addAll(covered); continue;
             }
             LinkedHashMap<String, AiPlace> unique = new LinkedHashMap<>();
             for (AiPlace p : ordinary) if (p.name() != null && !p.name().isBlank()) unique.putIfAbsent(ItineraryRules.nameKey(p.name(), request.destination()), p);
@@ -79,7 +85,7 @@ public final class ItineraryScheduler {
             for(int index=0;index<requestedMeals.size();index++) if(requestedMeals.get(index).lastRestaurant()) lastBits|=1 << (ItineraryRules.STYLES.size()+1+index);
             final int lastRestaurantMask=lastBits;
             final int requestedMealMask=mealMask;
-            int requiredMask = mask(required) | (evening >= 0 ? eveningBit : 0) | mealMask;
+            int requiredMask = (evening >= 0 ? eveningBit : 0) | mealMask;
             int limit = strict ? Math.min(10, Math.max(evening >= 0 ? 2 : 1, Math.max(ordinary.size(), required.size() + requestedMeals.size()))) : maxPlaces;
             limit = Math.min(limit, requestLimit);
             Map<String, Plan> plans = new HashMap<>();
@@ -136,7 +142,7 @@ public final class ItineraryScheduler {
                                 .thenComparing(Comparator.comparingInt(Plan::quality).reversed()).thenComparingInt(Plan::last))
                         .limit(3000).collect(java.util.stream.Collectors.toMap(state -> state.coverage() + ":" + state.last(), state -> state));
             }
-            Comparator<Plan> preference = strict ? Comparator.comparingInt(Plan::quality).thenComparingInt(p -> -p.last())
+            Comparator<Plan> preference = strict ? Comparator.<Plan>comparingInt(p -> Integer.bitCount(p.coverage() & mask(required))).thenComparingInt(Plan::quality).thenComparingInt(p -> -p.last())
                     : Comparator.<Plan>comparingInt(p -> Integer.bitCount(p.coverage() & requestedMealMask))
                         .thenComparingInt(p -> Integer.bitCount(p.coverage() & mask(required)))
                         .thenComparingInt(p -> evening < 0 || (p.coverage() & eveningBit) != 0 ? 1 : 0)
@@ -146,6 +152,12 @@ public final class ItineraryScheduler {
                             new SchedulingException(day.dayNumber() + "일차: 도착·출발 및 숙소 고정 시간을 지키며 선택 스타일(" + String.join(", ", required)
                                     + ")을 반영할 수 없습니다. 일반 장소 후보를 보완하거나 도착·출발 시간/스타일을 조정해 주세요."));
             days.add(new AiDay(day.dayNumber(), best.places(), alternatives));
+            best.places().forEach(p -> tripCovered.addAll(ItineraryRules.stylesFor(p)));
+        }
+        if(strict) {
+            var missing=new LinkedHashSet<>(request.styles()==null?List.<String>of():request.styles());
+            missing.removeAll(tripCovered);
+            if(!missing.isEmpty())throw new SchedulingException("여행 전체에 빠진 스타일: "+String.join(", ",missing));
         }
         return new AiItinerary(input.title(), days);
     }

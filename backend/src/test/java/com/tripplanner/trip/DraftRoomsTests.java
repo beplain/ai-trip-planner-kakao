@@ -64,6 +64,11 @@ class DraftRoomsTests {
         String editorToken = drafts.invite(room.id(), MemberRole.EDITOR, owner).token();
         drafts.join(editorToken, editor);
         drafts.join(drafts.invite(room.id(), MemberRole.VIEWER, owner).token(), viewer);
+        var expectedSummary = new DraftRooms.RoomSummary(room.id(), "부산 여행", "부산", 2);
+        assertEquals(List.of(expectedSummary), drafts.summaries(owner));
+        assertEquals(List.of(expectedSummary), drafts.summaries(editor));
+        assertEquals(List.of(expectedSummary), drafts.summaries(viewer));
+        assertTrue(drafts.summaries(stranger).isEmpty());
         var latest = drafts.get(room.id(), editor);
         var editedPlace = new PlaceDraft(place.placeId(), place.name(), place.address(), place.latitude(), place.longitude(), place.visitTime(),
                 place.reason(), "같이 수정한 메모", place.category(), place.verified(), place.placeUrl(), place.phone());
@@ -100,6 +105,7 @@ class DraftRoomsTests {
         assertEquals(MemberRole.VIEWER, service.get(first.id(), viewer).myRole());
         assertEquals(first.id(), drafts.get(room.id(), owner).savedTripId());
         assertTrue(drafts.list(owner).isEmpty());
+        assertTrue(drafts.summaries(owner).isEmpty());
         assertThrows(ApiException.class, () -> drafts.update(room.id(), new DraftRooms.Update(updated.version(), edited), editor));
         assertEquals(first.id(), drafts.join(editorToken, stranger).savedTripId());
         assertEquals(MemberRole.EDITOR, service.get(first.id(), stranger).myRole());

@@ -28,7 +28,12 @@ public record AppProperties(
         }
     }
 
-    public record OpenAi(String apiKey, String model, String baseUrl) {
+    public record OpenAi(String apiKey, String model, String baseUrl, String reasoningEffort) {
+        @org.springframework.boot.context.properties.bind.ConstructorBinding
+        public OpenAi {
+            if(reasoningEffort==null)reasoningEffort="low";
+        }
+        public OpenAi(String apiKey,String model,String baseUrl) { this(apiKey,model,baseUrl,"low"); }
         public boolean enabled() {
             return apiKey != null && !apiKey.isBlank();
         }

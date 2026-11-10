@@ -5,6 +5,7 @@ import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, View } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
+import { loadMapRoutes, type RouteLeg, type RouteSegment } from '../../../../services/map-routes';
 import { draftsApi } from '../../../../services/drafts';
 import { apiError } from '../../../../services/api';
 import { tripsApi, type Place, type TripDraft } from '../../../../services/trips';
@@ -26,7 +27,11 @@ type MapGroup = { color: string; places: MapPlace[] };
 function TripMapScreen() {
   const { id, draftId, optionId } = useLocalSearchParams<{ id: string; draftId?: string; optionId?: string }>();
   const [trip, setTrip] = useState<TripDraft | null>(null);
-  const [dayIdx, setDayIdx] = useState<number | 'all'>('all');
+  const [dayIdx, setDayIdx] = useState<number | 'all'>(0);
+  const [routes, setRoutes] = useState<(RouteSegment & { color: string })[]>([]);
+  const [routeState, setRouteState] = useState('');
+  const [routeRetry, setRouteRetry] = useState(0);
+  const routeCache = useRef(new Map<string, RouteLeg[]>());
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
@@ -101,6 +106,51 @@ function TripMapScreen() {
     });
     return { groups, lookup, missing };
   }, [trip, dayIdx]);
+
+  useEffect(() => {
+    if (!trip || !mapReady || !KAKAO_JS_KEY) return;
+    let active = true;
+    const mode = trip.travelDetails?.movementMode ?? 'CAR';
+    const requests = groups.map((group) => {
+      const legs = group.places.slice(1).flatMap((place, index) => {
+        const previous = group.places[index];
+        // Never join across an itinerary entry with missing coordinates.
+        if (Number(place.label) !== Number(previous.label) + 1) return [];
+        return [{ from: { latitude: previous.lat, longitude: previous.lng }, to: { latitude: place.lat, longitude: place.lng } }];
+      });
+      return { group, legs, key: JSON.stringify([mode, legs]) };
+    });
+    void (async () => {
+      await Promise.resolve();
+      if (!active) return;
+      setRoutes([]); setRouteState('이동 경로를 확인하고 있어요…');
+      const drawn: (RouteSegment & { color: string })[] = [];
+      let unavailable = 0, total = 0;
+      for (const request of requests) {
+        if (!active) return;
+        if (!request.legs.length) continue;
+        let result = routeCache.current.get(request.key);
+        if (!result) {
+          try {
+            result = await loadMapRoutes(mode, request.legs);
+            if (result.length === request.legs.length && result.every((leg) => leg.status === 'OK')) routeCache.current.set(request.key, result);
+          } catch { result = []; }
+        }
+        if (!active) return;
+        total += request.legs.length;
+        unavailable += request.legs.filter((_, index) => result?.[index]?.status !== 'OK').length;
+        result.forEach((leg) => leg.segments.forEach((segment) => drawn.push({ ...segment, color: request.group.color })));
+        setRoutes([...drawn]);
+      }
+      if (active) setRouteState(total === 0 ? '' : unavailable > 0
+        ? `이동 구간 ${total}개 중 ${unavailable}개는 경로를 모두 확인하지 못했어요.` : '실제 이동 경로 · 현재 조회 기준');
+    })();
+    return () => { active = false; };
+  }, [trip, groups, mapReady, routeRetry]);
+
+  useEffect(() => {
+    if (mapReady) webRef.current?.injectJavaScript(`window.renderRoutes(${JSON.stringify(routes)}); true;`);
+  }, [mapReady, routes]);
 
   const count = groups.reduce((n, g) => n + g.places.length, 0);
 
@@ -185,6 +235,9 @@ function TripMapScreen() {
           )}
 
           <View style={{ position: 'absolute', left: 12, right: 12, bottom: 12, backgroundColor: 'rgba(255,255,255,0.97)', borderRadius: 14, padding: 12 }}>
+            {!!routeState && <Text style={[s.mutedSmall, { marginBottom: 4 }]}>{routeState}</Text>}
+            {routeState.includes('확인하지 못') && <Pressable accessibilityRole="button" onPress={() => setRouteRetry((value) => value + 1)} style={{ paddingVertical: 8 }}><Text style={s.smallButtonText}>경로 다시 조회</Text></Pressable>}
+            {trip.travelDetails?.movementMode === 'PUBLIC_TRANSIT' && <Text style={[s.mutedSmall, { marginBottom: 4 }]}>파랑: 버스 · 초록: 지하철 · 회색 점선: 도보</Text>}
             {position && <Text style={[s.mutedSmall, { marginBottom: 6 }]}>내 위치 · {new Date(position.timestamp).toLocaleTimeString()}{position.coords.accuracy != null ? ` · 정확도 약 ${Math.round(position.coords.accuracy)}m` : ''} · 버튼을 눌러 갱신</Text>}
             {selected ? (
               <>
@@ -202,7 +255,7 @@ function TripMapScreen() {
               </>
             ) : (
               <>
-                <Text style={s.mutedSmall}>번호 마커를 누르면 장소 정보가 보여요. 점선은 방문 순서를 이은 직선이며 실제 이동 경로가 아닙니다.</Text>
+                <Text style={s.mutedSmall}>번호 마커를 누르면 장소 정보가 보여요. 확인되지 않은 이동 구간은 선으로 표시하지 않아요.</Text>
                 {missing > 0 && <Text style={[s.mutedSmall, { color: C.warnText }]}>지도 미확인 장소 {missing}곳은 표시되지 않았어요.</Text>}
               </>
             )}

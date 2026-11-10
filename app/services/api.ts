@@ -36,7 +36,11 @@ api.interceptors.response.use(
     // 로그인 API 자체의 401은 로그인 화면에서 처리
     const url: string = error?.config?.url ?? '';
     if (isAxiosError(error) && error.response?.status === 401 && !url.startsWith('/api/auth/')) {
-      onUnauthorized?.();
+      const headers = error.config?.headers;
+      const sent = headers && typeof headers.get === 'function'
+        ? headers.get('Authorization') : headers?.Authorization ?? headers?.authorization;
+      // A delayed response for an old credential must not log out a newer session.
+      if (accessToken && sent === `Bearer ${accessToken}`) onUnauthorized?.();
     }
     return Promise.reject(error);
   },

@@ -1,78 +1,49 @@
+import { isAxiosError } from 'axios';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { AppState } from 'react-native';
 
 import { setAccessToken, setUnauthorizedHandler } from '../../services/api';
-import { fetchMe, signInDev, signInWithKakao, tokenStore, type User } from '../../services/auth';
+import { fetchMe, signInDev, signInWithKakao, tokenStore } from '../../services/auth';
+import { SessionRecovery, type SessionState } from '../../services/session-recovery';
 
-type AuthState = {
-  user: User | null;
-  ready: boolean; // 저장된 토큰 확인이 끝났는지
+type AuthState = SessionState & {
   loginWithKakao: () => Promise<boolean>;
-  connectCalendar: () => Promise<boolean>;
   loginDev: (name: string) => Promise<void>;
   logout: () => Promise<void>;
+  retryRestore: () => Promise<void>;
 };
-
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [ready, setReady] = useState(false);
-
-  const logout = useCallback(async () => {
-    setAccessToken(null);
-    setUser(null);
-    await tokenStore.clear().catch(() => undefined);
-  }, []);
-
-  // 앱 시작 시 저장된 JWT로 세션 복원
+  const [state, setState] = useState<SessionState>({ user: null, ready: false, restoring: false, sessionError: null });
+  const [session] = useState(() => new SessionRecovery({
+    store: tokenStore, fetchMe, setToken: setAccessToken,
+    isUnauthorized: (error) => isAxiosError(error) && error.response?.status === 401,
+    onState: setState,
+  }));
+  const logout = useCallback(() => session.logout(), [session]);
+  const retryRestore = useCallback(() => session.retry(), [session]);
   useEffect(() => {
-    setUnauthorizedHandler(() => { void logout(); });
-    (async () => {
-      try {
-        const token = await tokenStore.get();
-        if (token) {
-          setAccessToken(token);
-          setUser(await fetchMe());
-        }
-      } catch {
-        setAccessToken(null);
-        await tokenStore.clear().catch(() => undefined);
-      } finally {
-        setReady(true);
-      }
-    })();
-    return () => setUnauthorizedHandler(null);
-  }, [logout]);
-
-  const applyToken = useCallback(async (token: string, u: User) => {
-    setAccessToken(token);
-    await tokenStore.set(token);
-    setUser(u);
-  }, []);
+    setUnauthorizedHandler(() => { void session.logout(); });
+    void session.start();
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next === 'active') void session.resume();
+    });
+    return () => { subscription.remove(); session.stop(); setUnauthorizedHandler(null); };
+  }, [session]);
 
   const loginWithKakao = useCallback(async () => {
-    const res = await signInWithKakao();
-    if (!res) return false;
-    await applyToken(res.accessToken, res.user);
-    return true;
-  }, [applyToken]);
-
+    const version = session.getVersion();
+    const result = await signInWithKakao();
+    return result ? session.login(result.accessToken, result.user, version) : false;
+  }, [session]);
   const loginDev = useCallback(async (name: string) => {
-    const res = await signInDev(name);
-    await applyToken(res.accessToken, res.user);
-  }, [applyToken]);
-
-  const connectCalendar = useCallback(async () => {
-    const result = await signInWithKakao(true);
-    if (!result) return false;
-    if (!user || result.user.id !== user.id) throw new Error('현재 로그인한 카카오 계정과 같은 계정으로 연결해 주세요. 계정이 다르면 로그아웃 후 다시 로그인해 주세요.');
-    if (!result.user.calendarConnected) throw new Error('톡캘린더 권한에 동의하지 않았습니다. 연결 화면에서 일정 생성 권한을 허용해 주세요.');
-    await applyToken(result.accessToken, result.user);
-    return true;
-  }, [user, applyToken]);
-
-  const value = useMemo(() => ({ user, ready, loginWithKakao, connectCalendar, loginDev, logout }),
-    [user, ready, loginWithKakao, connectCalendar, loginDev, logout]);
+    const version = session.getVersion();
+    const result = await signInDev(name);
+    await session.login(result.accessToken, result.user, version);
+  }, [session]);
+  const value = useMemo(() => ({ ...state, loginWithKakao, loginDev, logout, retryRestore }),
+    [state, loginWithKakao, loginDev, logout, retryRestore]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
