@@ -19,7 +19,11 @@ public class GoogleOpeningHoursClient {
     private static final org.slf4j.Logger log=org.slf4j.LoggerFactory.getLogger(GoogleOpeningHoursClient.class);
     private static final String MASK="places.id,places.displayName,places.formattedAddress,places.location,places.businessStatus,places.regularOpeningHours,places.currentOpeningHours";
     private final RestClient http;private final String key;private final int maxCalls;private final Clock clock;
-    private final ExecutorService pool=Executors.newFixedThreadPool(4);
+    private final ExecutorService pool=Executors.newFixedThreadPool(16, task -> {
+        Thread thread = new Thread(task, "opening-hours");
+        thread.setDaemon(true);
+        return thread;
+    });
     @Autowired public GoogleOpeningHoursClient(@Qualifier("placesRestClient") RestClient http,
             @Value("${app.google-places.api-key:}") String key,@Value("${app.google-places.max-calls:100}") int maxCalls) {
         this(http,key,maxCalls,Clock.system(ZoneId.of("Asia/Seoul")));
@@ -47,10 +51,10 @@ public class GoogleOpeningHoursClient {
             requireReady();
         }
         public void prefetchMealCandidates(List<PlaceDraft> candidates) {
-            if (candidates.size() < 2 || cache.containsKey(key(candidates.get(0)))
-                    || calls.get() >= maxCalls / 2) return;
-            // Reserve the rest of the request budget for candidates actually needed and final verification.
-            prefetch(candidates.stream().filter(p -> !cache.containsKey(key(p))).toList());
+            if (calls.get() >= maxCalls / 2) return;
+            // A cached first choice must not hide the remaining uncached candidates behind one-by-one lookups.
+            List<PlaceDraft> missing = candidates.stream().filter(p -> !cache.containsKey(key(p))).toList();
+            if (!missing.isEmpty()) prefetch(missing);
         }
 
         public GoogleOpeningHours lookup(PlaceDraft p) {

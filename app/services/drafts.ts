@@ -12,6 +12,10 @@ export const draftsApi = {
   async switchOption(id: string, optionId: string, version: number) {
     return (await api.put<DraftRoom>(`${room(id)}/option`, { optionId, version })).data;
   },
+  async restoreGenerated(id: string, input: GenerateInput, title: string, version: number) {
+    const response = await api.post<DraftRoom>(`${room(id)}/restore-generated`, { input, title, version });
+    return response.status === 204 ? null : response.data;
+  },
   async regenerateOptions(id: string, input: GenerateInput, title: string, version: number) {
     return (await api.post<DraftOptions>(`${room(id)}/regenerate-options`, { input, title, version }, { timeout: 300000 })).data;
   },

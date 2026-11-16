@@ -36,10 +36,11 @@ final class DraftOptionComposer {
             } else Collections.reverse(ordered);
             List<ExtraRequestRules.Visit> counted=new ArrayList<>();
             for(DayDraft previousDay:days) for(PlaceDraft previous:previousDay.places()) if(previous.fixedEventId()==null)
-                counted.add(new ExtraRequestRules.Visit(previousDay.dayNumber(),previous.name(),previous.category()));
+                counted.add(new ExtraRequestRules.Visit(previousDay.dayNumber(),previous.name(),previous.category(),previous.categoryPath()));
             ordered.removeIf(p -> {
-                if(!ExtraRequestRules.allowsAdditional(base.effectiveRequest(),p.name(),p.category(),day.dayNumber(),base.days().size(),counted)) return true;
-                counted.add(new ExtraRequestRules.Visit(day.dayNumber(),p.name(),p.category())); return false;
+                var visit = new ExtraRequestRules.Visit(day.dayNumber(),p.name(),p.category(),p.categoryPath());
+                if(!ExtraRequestRules.allowsAdditional(base.effectiveRequest(),visit,base.days().size(),counted)) return true;
+                counted.add(visit); return false;
             });
             List<AiPlace> alternatives = ordered.stream().filter(p -> !used.contains(p.placeId())
                     && !names.contains(ItineraryRules.nameKey(p.name(),base.destination()))).map(p -> asAi(p,base.styles())).toList();

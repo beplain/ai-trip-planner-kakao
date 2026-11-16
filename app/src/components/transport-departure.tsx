@@ -1,3 +1,4 @@
+import { FitText } from './fit-text';
 import { ItineraryDisclosure } from './itinerary-disclosure';
 import { Text, View } from 'react-native';
 import type { TravelDetails } from '../../services/trips';
@@ -19,7 +20,7 @@ export function TransportDeparture({ value, dayNumber, color = C.primary }: {
     </View>
     <ItineraryDisclosure name={boarding.name} summary={<>
       <Text style={[s.placeTime, { color }]}>{time} · {train ? '열차 출발' : '여행 출발'}</Text>
-      <Text style={s.placeName}>{boarding.name}</Text>
+      <FitText fontSize={16} style={s.placeName}>{boarding.name}</FitText>
       <Text style={s.placeAddr}>{boarding.address}</Text>
     </>}>
       <Text style={s.placeNote}>{train ? `${train.trainType} ${train.trainNo}` : mode} · {transport.arrivalPlace} 방면</Text>
@@ -41,7 +42,7 @@ export function TransportReturnArrival({ value, dayNumber, dayCount, color = C.p
     <View style={s.timeline}><View style={[s.dot, { backgroundColor: color }]} /></View>
     <ItineraryDisclosure name={place.name} summary={<>
       <Text style={[s.placeTime, { color }]}>{time ? `${time} · ` : ''}귀가 도착{time && !train && transport.returnArrivalAuto !== false ? ' (예상)' : ''}</Text>
-      <Text style={s.placeName}>{place.name}</Text>
+      <FitText fontSize={16} style={s.placeName}>{place.name}</FitText>
       <Text style={s.placeAddr}>{place.address}</Text>
     </>}>
       {train && transport.returnArrivalLocation && place.placeId !== transport.returnArrivalLocation.placeId && <Text style={s.placeNote}>도착 장소: {transport.returnArrivalLocation.name} · 역에서 이동 시간 별도 확인</Text>}

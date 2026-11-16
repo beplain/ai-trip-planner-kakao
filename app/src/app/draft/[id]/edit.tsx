@@ -1,6 +1,6 @@
-import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, BackHandler, Keyboard, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { apiError, isConflict } from '../../../../services/api';
@@ -21,9 +21,36 @@ export default function EditDraftRoute() {
   return <RequireAuth><EditDraftScreen /></RequireAuth>;
 }
 
+const EDIT_FIELDS = [
+  ['title', '여행 이름'],
+  ['destination', '목적지'],
+  ['period', '여행 기간'],
+  ['movement', '여행 중 이동 방식'],
+  ['stays', '숙소'],
+  ['transport', '교통편'],
+  ['budget', '예산'],
+  ['styles', '여행 스타일'],
+  ['request', '추가 요청'],
+] as const;
+
 function EditDraftScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const lock = useRef(false);
+  const [field, setField] = useState<typeof EDIT_FIELDS[number][0] | null>(null);
+  const closeField = useCallback(() => {
+    Keyboard.dismiss();
+    setField(null);
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (lock.current) return true;
+      if (!field) return false;
+      closeField();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [field, closeField]));
   const [room, setRoom] = useState<DraftRoom | null>(null);
   const [travelDetails, setTravelDetails] = useState<TravelDetails | undefined>();
   const [title, setTitle] = useState('');
@@ -74,9 +101,9 @@ function EditDraftScreen() {
     if (!destinationRegion(destination)) return Alert.alert('여행할 지역을 선택해 주세요');
     const detailsError = travelDetailsError(travelDetails, days, startDate);
     if (detailsError) return Alert.alert('숙소·교통 정보를 확인해 주세요', detailsError);
-    Alert.alert('새 초안으로 다시 만들까요?', '수정한 조건으로 최대 3가지 초안을 새로 만들고, 초안 화면에서 유형별로 확인합니다. 기존 장소·순서·시간·메모는 새 일정으로 교체되며, 동행자와 초대 링크는 유지됩니다.', [
+    Alert.alert('여행 조건을 변경할까요?', '같은 조건으로 만든 초안이 있으면 복원하고, 없으면 새 초안을 만듭니다.', [
       { text: '취소', style: 'cancel' },
-      { text: '새 초안 만들기', onPress: () => { void regenerate(); } },
+      { text: '조건 적용', onPress: () => { void regenerate(); } },
     ]);
   }
 
@@ -96,12 +123,16 @@ function EditDraftScreen() {
     if (!room || lock.current) return;
     lock.current = true; setBusy(true);
     try {
-      const result = await draftsApi.regenerateOptions(id, {
+      const input = {
         destination: destinationRegion(destination)!, startDate: startDate || undefined,
         days: tripDayCount(startDate, endDate), budget: formatBudget(budget) || undefined,
         styles, travelDetails, request: request.trim() || undefined,
-      }, title.trim(), room.version);
-      await draftsApi.selectRegenerated(id, combineDraftOptions(result, title), room.version);
+      };
+      const restored = await draftsApi.restoreGenerated(id, input, title.trim(), room.version);
+      if (!restored) {
+        const result = await draftsApi.regenerateOptions(id, input, title.trim(), room.version);
+        await draftsApi.selectRegenerated(id, combineDraftOptions(result, title), room.version);
+      }
       router.back();
     } catch (e) {
       Alert.alert(isConflict(e) ? '초안이 변경되었어요' : '다시 생성하지 못했어요', apiError(e));
@@ -110,8 +141,8 @@ function EditDraftScreen() {
   }
 
   if (busy) return <SafeAreaView style={s.safe}>
-    <ScreenHeader title={renaming ? '여행 이름 저장 중' : '초안 다시 만드는 중'} back={false} />
-    <View style={s.center}><ActivityIndicator color={C.primary} size="large" /><Text style={[s.sectionTitle, { marginTop: 18 }]}>{renaming ? '여행 이름을 저장하고 있어요' : '수정한 조건으로 새 일정을 만들고 있어요'}</Text>{!renaming && <Text style={[s.subtitle, { textAlign: 'center' }]}>완료되면 초안 화면에서 유형을 전환할 수 있습니다. 생성에 실패하면 기존 초안이 유지됩니다.</Text>}</View>
+    <ScreenHeader title={renaming ? '여행 이름 저장 중' : '여행 조건 적용 중'} back={false} />
+    <View style={s.center}><ActivityIndicator color={C.primary} size="large" /><Text style={[s.sectionTitle, { marginTop: 18 }]}>{renaming ? '여행 이름을 저장하고 있어요' : '수정한 조건을 적용하고 있어요'}</Text>{!renaming && <Text style={[s.subtitle, { textAlign: 'center' }]}>완료되면 초안 화면에서 유형을 전환할 수 있습니다. 생성에 실패하면 기존 초안이 유지됩니다.</Text>}</View>
   </SafeAreaView>;
 
   if (!room) {
@@ -120,34 +151,47 @@ function EditDraftScreen() {
 
   return (
     <SafeAreaView style={s.safe}>
-      <ScreenHeader title="여행 정보 수정" />
-      <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-        <Text style={s.label}>여행 이름</Text>
-        <TextInput value={title} onChangeText={setTitle} style={s.input} maxLength={100} />
-        <Text style={s.label}>목적지</Text>
-        <DestinationInput value={destination} onChange={setDestination} />
-        <Text style={s.label}>여행 기간 <Text style={s.required}>*</Text></Text>
-        <TripPeriodInput start={startDate} end={endDate} onChange={(start, end) => { setStartDate(start); setEndDate(end); }} />
-        <TravelDetailsInput destination={destination} value={travelDetails} onChange={setTravelDetails} startDate={startDate} days={tripDayCount(startDate, endDate)} />
-        <Text style={s.label}>예산</Text>
-        <BudgetInput value={budget} onChange={setBudget} />
-        <Text style={s.label}>여행 스타일</Text>
-        <View style={s.chips}>
+      <ScreenHeader title={EDIT_FIELDS.find(([id]) => id === field)?.[1] ?? '여행 정보 수정'}
+        onBack={field ? closeField : undefined} />
+      <ScrollView key={field ?? 'menu'} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+        {field === null && <>
+          <Text accessibilityRole="header" style={s.title}>어떤 정보를 수정할까요?</Text>
+          <Text style={s.subtitle}>수정할 항목을 선택한 뒤 목록에서 변경사항을 저장하세요.</Text>
+          {EDIT_FIELDS.map(([id, label]) => (
+            <Pressable key={id} accessibilityRole="button" style={s.tripCard} onPress={() => setField(id)}>
+              <Text style={[s.tripTitle, { flex: 1 }]}>{label}</Text>
+              <Text style={s.chevron}>›</Text>
+            </Pressable>
+          ))}
+          <Pressable accessibilityRole="button" style={[s.primary, { marginTop: 16 }]} onPress={save}>
+            <Text style={s.primaryText}>변경사항 저장</Text>
+          </Pressable>
+        </>}
+        {field === 'title' && <TextInput accessibilityLabel="여행 이름" value={title} onChangeText={setTitle} style={s.input} maxLength={100} />}
+        {field === 'destination' && <DestinationInput value={destination} onChange={setDestination} />}
+        {field === 'period' && <TripPeriodInput start={startDate} end={endDate} onChange={(start, end) => { setStartDate(start); setEndDate(end); }} />}
+        {(field === 'movement' || field === 'stays' || field === 'transport') && (
+          <TravelDetailsInput section={field} destination={destination} value={travelDetails} onChange={setTravelDetails}
+            startDate={startDate} days={tripDayCount(startDate, endDate)} />
+        )}
+        {field === 'budget' && <BudgetInput value={budget} onChange={setBudget} />}
+        {field === 'styles' && <View style={s.chips}>
           {STYLE_OPTIONS.map((item) => (
-            <Pressable key={item} onPress={() => setStyles((c) => (c.includes(item) ? c.filter((x) => x !== item) : [...c, item]))} style={[s.chip, styles.includes(item) && s.chipActive]}>
+            <Pressable key={item} accessibilityRole="button" accessibilityState={{ selected: styles.includes(item) }}
+              onPress={() => setStyles((c) => (c.includes(item) ? c.filter((x) => x !== item) : [...c, item]))}
+              style={[s.chip, styles.includes(item) && s.chipActive]}>
               <Text style={[s.chipText, styles.includes(item) && s.chipTextActive]}>{styleLabel(item)}</Text>
             </Pressable>
           ))}
-        </View>
-        <Text style={s.label}>추가 요청</Text>
-        <Text style={s.mutedSmall}>장소 제외·필수 방문·날짜별 식사와 음식 종류·방문 시간 등을 요청할 수 있어요. 여러 요청은 줄바꿈으로 구분해 주세요.</Text>
-        <TextInput value={request} onChangeText={setRequest} style={[s.input, s.inputMulti]} multiline maxLength={200} placeholder="예: 마지막 날 저녁식사는 삼겹살로 추천해줘" />
-        <View style={s.infoBox}>
-          <Text style={s.infoText}>여행 이름만 변경하면 기존 일정은 유지됩니다. 목적지·기간·숙소·교통·예산·스타일·추가 요청을 변경하면 모든 날짜의 장소·순서·시간·메모를 새로 생성합니다.</Text>
-        </View>
-        <Pressable disabled={busy} style={[s.primary, busy && s.disabled]} onPress={save}>
-          <Text style={s.primaryText}>{conditionsChanged ? '수정 내용 저장' : '여행 이름 저장'}</Text>
-        </Pressable>
+        </View>}
+        {field === 'request' && <>
+          <Text style={s.mutedSmall}>여러 요청은 줄바꿈으로 구분해 주세요.</Text>
+          <TextInput accessibilityLabel="추가 요청" value={request} onChangeText={setRequest} style={[s.input, s.inputMulti]}
+            multiline maxLength={200} placeholder="예: 마지막 날 저녁식사는 삼겹살로 추천해줘" />
+        </>}
+        {field !== null && <Pressable accessibilityRole="button" style={[s.primary, { marginTop: 24 }]} onPress={closeField}>
+          <Text style={s.primaryText}>항목 선택으로 돌아가기</Text>
+        </Pressable>}
       </ScrollView>
     </SafeAreaView>
   );

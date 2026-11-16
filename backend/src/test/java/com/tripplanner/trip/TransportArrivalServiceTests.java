@@ -51,6 +51,20 @@ class TransportArrivalServiceTests {
         try { assertEquals("08:40",new TransportArrivalService(routes).calculate(input(TransportMode.BUS,"08:00",true)).arrivalTime()); server.verify(); }
         finally { routes.shutdown(); }
     }
+    @Test void carAuthorizationFailureIsReportedSeparately() {
+        var builder = RestClient.builder();
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(containsString("apis-navi.kakaomobility.com")))
+                .andRespond(withStatus(org.springframework.http.HttpStatus.FORBIDDEN));
+        var routes = new RouteTimeClient("test", "", 3, builder.build());
+        try {
+            var error = assertThrows(ApiException.class,
+                    () -> new TransportArrivalService(routes).calculate(input(TransportMode.CAR, "08:00", true)));
+            assertTrue(error.getMessage().contains("인증 또는 이용 권한"));
+            server.verify();
+        } finally { routes.shutdown(); }
+    }
+
     @Test void unavailableRouteCannotInventArrival() {
         var routes=new RouteTimeClient("","",3,noNetwork());
         try { assertThrows(ApiException.class,()->new TransportArrivalService(routes).calculate(input(TransportMode.CAR,"08:00",true))); }

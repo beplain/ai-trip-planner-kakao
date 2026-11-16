@@ -57,7 +57,7 @@ class OpenAiRetryBudgetTests {
             .andExpect(jsonPath("$.reasoning_effort").doesNotExist())
             .andExpect(jsonPath("$.response_format.json_schema.schema.properties.days.items.properties.places.items.properties.searchQuery").doesNotExist())
             .andExpect(jsonPath("$.response_format.json_schema.schema.properties.days.items.properties.places.items.properties.note").doesNotExist())
-            .andExpect(jsonPath("$.response_format.json_schema.schema.properties.days.items.properties.places.items.properties.reason").doesNotExist())
+            .andExpect(jsonPath("$.response_format.json_schema.schema.properties.days.items.properties.places.items.properties.reason").exists())
             .andExpect(jsonPath("$.response_format.json_schema.schema.properties.days.items.properties.places.items.properties.matchedStyles").doesNotExist())
             .andExpect(jsonPath("$.messages[0].content",org.hamcrest.Matchers.containsString("2~3곳")))
             .andExpect(jsonPath("$.messages[0].content",org.hamcrest.Matchers.containsString("일반 식당과 식당 대체 후보를 출력하지 마세요")))
@@ -123,7 +123,7 @@ class OpenAiRetryBudgetTests {
         String response=mapper.writeValueAsString(Map.of("choices",List.of(Map.of("message",Map.of("content",itinerary.toString())))));
         var builder=RestClient.builder();var server=MockRestServiceServer.bindTo(builder).build();
         server.expect(jsonPath("$.response_format.json_schema.schema.properties.days.items.properties.places.items.properties.matchedStyles").exists())
-            .andExpect(jsonPath("$.response_format.json_schema.schema.properties.days.items.properties.places.items.properties.reason").doesNotExist())
+            .andExpect(jsonPath("$.response_format.json_schema.schema.properties.days.items.properties.places.items.properties.reason").exists())
             .andRespond(withSuccess(response,MediaType.APPLICATION_JSON));
         var props=new AppProperties(null,null,new AppProperties.OpenAi("test","configured-model","https://example.invalid/v1"),false,null,7,null);
         var req=new ItineraryRequest("부산",null,1,null,List.of("힐링","카페","자연","야경"),null);

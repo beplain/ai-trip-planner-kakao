@@ -16,7 +16,7 @@ final class DraftMealPlanner {
     private static final int STAY = 60;
     private static final int MEAL_LOOKUP_BATCH = 3;
     private static final List<String> MENUS = List.of(
-            "삼겹살", "돼지국밥", "밀면", "비빔밥", "순두부", "설렁탕", "돈까스", "칼국수",
+            "삼겹살", "돼지국밥", "회", "밀면", "비빔밥", "순두부", "설렁탕", "돈까스", "칼국수",
             "순대국밥", "곰탕", "샌드위치", "콩나물국밥", "해장국", "김밥", "갈비찜", "초밥",
             "냉면", "쌀국수", "햄버거", "백반", "추어탕", "삼계탕", "갈비탕", "장어구이",
             "닭갈비", "닭볶음탕", "갈치조림", "족발", "보쌈", "떡볶이", "파스타", "피자",
@@ -29,11 +29,30 @@ final class DraftMealPlanner {
     private static final List<Meal> DEFAULTS = List.of(
             new Meal("아침", 480, 540), new Meal("점심", 660, 780), new Meal("저녁", 1020, 1140));
 
+    /** Places whose opening hours the planner is likely to read. Extra entries only warm the cache. */
+    static List<PlaceDraft> likelyLookups(TripDraft draft, Map<Integer, List<PlaceDraft>> alternatives,
+                                          List<PlaceDraft> restaurants, int variant) {
+        Map<String, PlaceDraft> warm = new LinkedHashMap<>();
+        for (DayDraft day : draft.days()) {
+            for (PlaceDraft place : day.places()) {
+                if (place.fixedEventId() == null) warm.putIfAbsent(place.placeId(), place);
+            }
+            int meals = 0;
+            for (PlaceDraft candidate : orderedCandidates(draft, day, alternatives, restaurants, variant)) {
+                if (!restaurant(candidate) || dish(candidate) == null) continue;
+                warm.putIfAbsent(candidate.placeId(), candidate);
+                if (++meals == 6 || warm.size() >= 36) break;
+            }
+            if (warm.size() >= 36) break;
+        }
+        return List.copyOf(warm.values());
+    }
+
     static List<PlaceDraft> search(String destination, int days, KakaoLocalClient lookups, ExecutorService executor) {
         var area = lookups.resolveArea(destination).orElse(null);
         int searchCount = Math.min(MENUS.size(), 12 + days * 5);
         List<Callable<List<PlaceDraft>>> searches = MENUS.stream().limit(searchCount).<Callable<List<PlaceDraft>>>map(menu -> () ->
-                lookups.search(destination + " " + menu, area, 8).stream()
+                lookups.search(destination + " " + ("회".equals(menu) ? "횟집" : menu), area, 8).stream()
                     .filter(hit -> hit.placeId() != null && PlaceCategories.matches("식당", hit)
                             && Double.isFinite(hit.lat()) && Double.isFinite(hit.lng()))
                     .map(hit -> new PlaceDraft(hit.placeId(), hit.name(), hit.address(), hit.lat(), hit.lng(),
@@ -79,20 +98,10 @@ final class DraftMealPlanner {
                     .forEach(p -> pool.putIfAbsent(p.placeId(), p));
             List<PlaceDraft> visits = new ArrayList<>();
             List<Meal> windows = windows(draft, day);
-            List<PlaceDraft> candidates = new ArrayList<>(pool.values());
-            if (!restaurants.isEmpty()) {
-                var rotated = new ArrayList<>(restaurants);
-                Collections.rotate(rotated, -variant * 7);
-                candidates.addAll(rotated);
-            }
+            List<PlaceDraft> candidates = orderedCandidates(draft, day, alternatives, restaurants, variant);
             var requests = ExtraRequestRules.meals(request, day.dayNumber(), draft.days().size());
-            Map<PlaceDraft, Integer> priority = new HashMap<>();
-            candidates.forEach(p -> priority.put(p, ExtraRequestRules.requiredPriority(request, p.name(), p.category())));
-            PlaceDraft anchor = day.places().stream().filter(TripRouteOptimizer::known).findFirst().orElse(null);
-            candidates.sort(Comparator.comparingInt((PlaceDraft p) -> priority.get(p)).reversed()
-                    .thenComparingInt(p -> distanceBand(p, anchor)));
             BiPredicate<DayDraft, PlaceDraft> eligibleVisit = (d, p) -> ExtraRequestRules.allowsAdditional(
-                    request, p.name(), p.category(), d.dayNumber(), draft.days().size(), counted) && open.test(d, p);
+                    request, visit(d.dayNumber(),p), draft.days().size(), counted) && open.test(d, p);
             var future = futureRequests(draft, day);
             for (int index = 0; index < windows.size(); index++) {
                 Meal window = windows.get(index);
@@ -101,13 +110,13 @@ final class DraftMealPlanner {
                 List<PlaceDraft> eligible = required.isEmpty() ? candidates.stream().filter(p ->
                         requests.stream().noneMatch(m -> m.exact(p.name(), p.categoryPath()))
                         && future.stream().noneMatch(m -> m.exact(p.name(), p.categoryPath()))).toList() : candidates;
-                var chosen = chooseMeal(draft, day, events, window, eligible, required, visits, usedPlaces, usedMenus, eligibleVisit, prefetch, gap);
+                var chosen = chooseMeal(draft, day, events, window, eligible, required, visits, usedPlaces, usedMenus, counted, eligibleVisit, prefetch, gap);
                 if (chosen == null) throw ApiException.badRequest(day.dayNumber() + "일차 " + window.label()
                         + "에 배치할 수 있는 중복 없는 식당을 찾지 못했습니다. 여행 시간이나 추가 요청을 확인해 주세요.");
                 visits.add(chosen);
                 usedPlaces.add(chosen.placeId());
                 usedMenus.add(dish(chosen));
-                counted.add(new ExtraRequestRules.Visit(day.dayNumber(), chosen.name(), chosen.category()));
+                counted.add(visit(day.dayNumber(),chosen));
             }
             int limit = ExtraRequestRules.visitLimit(request, 20);
             Map<String, PlaceDraft> separators = new LinkedHashMap<>();
@@ -136,6 +145,27 @@ final class DraftMealPlanner {
         return DraftVariants.withDays(draft, days, draft.warnings(), null, null);
     }
 
+    private static List<PlaceDraft> orderedCandidates(TripDraft draft, DayDraft day, Map<Integer, List<PlaceDraft>> alternatives,
+                                                      List<PlaceDraft> restaurants, int variant) {
+        Map<String, PlaceDraft> pool = new LinkedHashMap<>();
+        day.places().stream().filter(p -> p.fixedEventId() == null && p.verified()).forEach(p -> pool.put(p.placeId(), p));
+        alternatives.getOrDefault(day.dayNumber(), List.of()).stream().filter(PlaceDraft::verified)
+                .forEach(p -> pool.putIfAbsent(p.placeId(), p));
+        List<PlaceDraft> candidates = new ArrayList<>(pool.values());
+        if (!restaurants.isEmpty()) {
+            var rotated = new ArrayList<>(restaurants);
+            Collections.rotate(rotated, -variant * 7);
+            candidates.addAll(rotated);
+        }
+        String request = draft.effectiveRequest();
+        Map<PlaceDraft, Integer> priority = new HashMap<>();
+        candidates.forEach(p -> priority.put(p, ExtraRequestRules.requiredPriority(request, p)));
+        PlaceDraft anchor = day.places().stream().filter(TripRouteOptimizer::known).findFirst().orElse(null);
+        candidates.sort(Comparator.comparingInt((PlaceDraft p) -> priority.get(p)).reversed()
+                .thenComparingInt(p -> distanceBand(p, anchor)));
+        return candidates;
+    }
+
     private static int distanceBand(PlaceDraft place, PlaceDraft anchor) {
         if (anchor == null || !TripRouteOptimizer.known(place)) return 0;
         return (int) (Geo.distanceMeters(anchor.latitude(), anchor.longitude(), place.latitude(), place.longitude()) / 1000);
@@ -148,7 +178,7 @@ final class DraftMealPlanner {
 
     private static PlaceDraft chooseMeal(TripDraft draft, DayDraft day, List<TravelSchedule.Event> events,
                                         Meal meal, List<PlaceDraft> candidates, List<ExtraRequestRules.Meal> required,
-                                        List<PlaceDraft> visits, Set<String> ids, Set<String> menus,
+                                        List<PlaceDraft> visits, Set<String> ids, Set<String> menus, List<ExtraRequestRules.Visit> counted,
                                         BiPredicate<DayDraft, PlaceDraft> open,
                                         Consumer<List<PlaceDraft>> prefetch, int gap) {
         int middle = (meal.start() + meal.end()) / 2;
@@ -162,7 +192,11 @@ final class DraftMealPlanner {
         if (slots.isEmpty()) return null;
         List<PlaceDraft> eligible = candidates.stream()
                 .filter(p -> restaurant(p) && !ids.contains(p.placeId()))
-                .filter(p -> { String menu = dish(p); return menu != null && !menus.contains(menu); })
+                .filter(p -> {
+                    String menu = dish(p);
+                    return menu != null && (!menus.contains(menu) || ExtraRequestRules.allowsRequestedMealRepeat(
+                            draft.effectiveRequest(), visit(day.dayNumber(),p), draft.days().size(), counted));
+                })
                 .filter(p -> ExtraRequestRules.allows(draft.effectiveRequest(), p.name(), p.category()))
                 .filter(p -> required.stream().allMatch(m -> m.matchesPlace(p.name(), p.category(), p.categoryPath())))
                 .toList();
@@ -265,6 +299,7 @@ final class DraftMealPlanner {
 
     static void require(TripDraft draft) {
         Set<String> menus = new HashSet<>();
+        List<ExtraRequestRules.Visit> counted = new ArrayList<>();
         for (DayDraft day : draft.days()) {
             var visits = day.places().stream().filter(p -> p.fixedEventId() == null)
                     .sorted(Comparator.comparingInt(DraftMealPlanner::minute)).toList();
@@ -281,7 +316,11 @@ final class DraftMealPlanner {
                 throw ApiException.badRequest(day.dayNumber() + "일차에 필요한 식사 시간대를 채우지 못했습니다.");
             for (PlaceDraft meal : meals) {
                 String dish = dish(meal);
-                if (dish == null || !menus.add(dish)) throw ApiException.badRequest("여행 중 식사 메뉴를 서로 다르게 배치하지 못했습니다.");
+                var visit = visit(day.dayNumber(),meal);
+                if (dish == null || !menus.add(dish) && !ExtraRequestRules.allowsRequestedMealRepeat(
+                        draft.effectiveRequest(), visit, draft.days().size(), counted))
+                    throw ApiException.badRequest("여행 중 식사 메뉴를 서로 다르게 배치하지 못했습니다.");
+                counted.add(visit);
                 if (visits.stream().anyMatch(p -> p != meal && Math.abs(minute(p) - minute(meal)) < STAY))
                     throw ApiException.badRequest("식사 시간 1시간을 확보하지 못했습니다.");
             }
@@ -305,11 +344,19 @@ final class DraftMealPlanner {
     private static boolean restaurant(PlaceDraft p) { return "식당".equals(p.category()); }
     private static int minute(PlaceDraft p) { return TravelSchedule.minute(p.visitTime()); }
 
+    private static ExtraRequestRules.Visit visit(int day, PlaceDraft place) {
+        return new ExtraRequestRules.Visit(day,place.name(),place.category(),place.categoryPath());
+    }
+
+    static boolean isFishRestaurant(String name, String categoryPath) {
+        return FISH.matcher(Objects.toString(name,"") + " " + Objects.toString(categoryPath,"")).find();
+    }
+
     static String dish(PlaceDraft p) {
         String evidence = p.name() + " " + Objects.toString(p.categoryPath(), "");
         String compact = evidence.replaceAll("\\s+", "").replace("순댓국", "순대국밥")
                 .replace("돼지국밥집", "돼지국밥").replace("돈가스", "돈까스").replace("자장면", "짜장면");
-        return MATCH_ORDER.stream().filter(compact::contains).findFirst()
-                .orElseGet(() -> FISH.matcher(evidence).find() ? "회" : null);
+        return MATCH_ORDER.stream().filter(menu -> !"회".equals(menu) && compact.contains(menu)).findFirst()
+                .orElseGet(() -> isFishRestaurant(p.name(),p.categoryPath()) ? "회" : null);
     }
 }

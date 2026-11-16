@@ -21,6 +21,8 @@ public class GoogleHoursScheduler {
         public void prefetch(List<TripDraft> drafts){
             if(drafts.stream().anyMatch(d->d.days().stream().anyMatch(day->date(d,day)==null)))throw ApiException.badRequest("운영시간을 반영하려면 여행 날짜를 선택해 주세요.");
             lookups.prefetch(drafts.stream().flatMap(d->d.days().stream()).flatMap(d->d.places().stream()).toList());}
+        /** Warm the same per-request cache before scheduling. Does not change which visit is accepted. */
+        public void prefetchPlaces(Collection<PlaceDraft> places) { lookups.prefetch(places); }
         public TripDraft repair(TripDraft originalDraft,Map<Integer,List<PlaceDraft>> pool) {
             final TripDraft draft=relocateClosedVisits(originalDraft,pool);
             List<String> warnings=new ArrayList<>(draft.warnings()==null?List.of():draft.warnings());
@@ -34,15 +36,15 @@ public class GoogleHoursScheduler {
                     if(allowed(p,date,p.visitTime())){out.add(p.withBusinessHours(null));continue;}
                     int original=TravelSchedule.minute(p.visitTime());PlaceDraft replacement=null;
                     List<ExtraRequestRules.Visit> others=new ArrayList<>();
-                    for(var otherDay:draft.days())for(var other:otherDay.places())if(other.fixedEventId()==null && !Objects.equals(other.placeId(),p.placeId()))others.add(new ExtraRequestRules.Visit(otherDay.dayNumber(),other.name(),other.category()));
-                    for(var previousDay:days)for(var previous:previousDay.places())if(previous.fixedEventId()==null && !draft.days().stream().flatMap(d->d.places().stream()).anyMatch(v->Objects.equals(v.placeId(),previous.placeId())))others.add(new ExtraRequestRules.Visit(previousDay.dayNumber(),previous.name(),previous.category()));
-                    for(var previous:out)if(previous.fixedEventId()==null && !day.places().stream().anyMatch(v->Objects.equals(v.placeId(),previous.placeId())))others.add(new ExtraRequestRules.Visit(day.dayNumber(),previous.name(),previous.category()));
+                    for(var otherDay:draft.days())for(var other:otherDay.places())if(other.fixedEventId()==null && !Objects.equals(other.placeId(),p.placeId()))others.add(new ExtraRequestRules.Visit(otherDay.dayNumber(),other.name(),other.category(),other.categoryPath()));
+                    for(var previousDay:days)for(var previous:previousDay.places())if(previous.fixedEventId()==null && !draft.days().stream().flatMap(d->d.places().stream()).anyMatch(v->Objects.equals(v.placeId(),previous.placeId())))others.add(new ExtraRequestRules.Visit(previousDay.dayNumber(),previous.name(),previous.category(),previous.categoryPath()));
+                    for(var previous:out)if(previous.fixedEventId()==null && !day.places().stream().anyMatch(v->Objects.equals(v.placeId(),previous.placeId())))others.add(new ExtraRequestRules.Visit(day.dayNumber(),previous.name(),previous.category(),previous.categoryPath()));
                     List<PlaceDraft> candidates=pool.getOrDefault(day.dayNumber(),List.of()).stream()
                         .filter(c->c.verified()&&c.fixedEventId()==null&&Objects.equals(c.category(),p.category())&&!reserved.contains(c.placeId()))
                         .sorted(Comparator.comparingDouble(c->distance(p,c))).limit(12).toList();
                     for(var c:candidates) {
                         if(!ExtraRequestRules.allows(draft.effectiveRequest(),c.name(),c.category())
-                            ||!ExtraRequestRules.allowsAdditional(draft.effectiveRequest(),c.name(),c.category(),day.dayNumber(),draft.days().size(),others)
+                            ||!ExtraRequestRules.allowsAdditional(draft.effectiveRequest(),new ExtraRequestRules.Visit(day.dayNumber(),c.name(),c.category(),c.categoryPath()),draft.days().size(),others)
                             ||!ExtraRequestRules.allowsMealHit(draft.effectiveRequest(),day.dayNumber(),draft.days().size(),p.name(),p.category(),p.reason(),c.name(),c.categoryPath()))continue;
                         var moved=ExtraRequestRules.annotateMeal(TripRouteOptimizer.at(c,p.visitTime()),draft.effectiveRequest(),day.dayNumber(),draft.days().size());
                         if(!ExtraRequestRules.mealTimeAllowed(moved,p.visitTime(),draft.effectiveRequest(),day.dayNumber(),draft.days().size()))continue;

@@ -1,9 +1,15 @@
 package com.tripplanner.trip;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.tripplanner.common.ApiException;
+import com.tripplanner.config.HttpClientConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import com.tripplanner.trip.TripDtos.*;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -14,10 +20,12 @@ import java.util.concurrent.*;
 /** Kakao-only route lookup. Credentials stay on the server and are sent in headers. */
 @Component
 public class RouteTimeClient {
+    private static final Logger log = LoggerFactory.getLogger(RouteTimeClient.class);
     private final String carKey, transitKey;
     private final int maxCalls;
     private final RestClient http;
-    private final ExecutorService routePool = Executors.newFixedThreadPool(4, task -> {
+    private final RestClient arrivalHttp;
+    private final ExecutorService routePool = Executors.newFixedThreadPool(12, task -> {
         Thread thread = new Thread(task, "route-lookup"); thread.setDaemon(true); return thread;
     });
 
@@ -27,17 +35,18 @@ public class RouteTimeClient {
     @org.springframework.beans.factory.annotation.Autowired
     public RouteTimeClient(@Value("${app.routing.kakao-key:}") String carKey,
                            @Value("${app.routing.kakao-map-key:}") String transitKey,
-                           @Value("${app.routing.max-calls:12}") int maxCalls) {
-        this(carKey, transitKey, maxCalls, client());
+                           @Value("${app.routing.max-calls:12}") int maxCalls,
+                           java.net.http.HttpClient httpClient) {
+        this(carKey, transitKey, maxCalls, HttpClientConfig.client(httpClient, Duration.ofSeconds(2)),
+                HttpClientConfig.client(httpClient, Duration.ofSeconds(10)));
     }
     RouteTimeClient(String carKey, String transitKey, int maxCalls, RestClient http) {
-        this.carKey = carKey; this.transitKey = transitKey;
-        this.maxCalls = Math.max(0, Math.min(maxCalls, 80)); this.http = http;
+        this(carKey, transitKey, maxCalls, http, http);
     }
-    private static RestClient client() {
-        var f = new SimpleClientHttpRequestFactory();
-        f.setConnectTimeout(Duration.ofSeconds(2)); f.setReadTimeout(Duration.ofSeconds(2));
-        return RestClient.builder().requestFactory(f).build();
+    private RouteTimeClient(String carKey, String transitKey, int maxCalls, RestClient http, RestClient arrivalHttp) {
+        this.carKey = carKey.trim(); this.transitKey = transitKey.trim();
+        this.arrivalHttp = arrivalHttp;
+        this.maxCalls = Math.max(0, Math.min(maxCalls, 80)); this.http = http;
     }
     Session session(MovementMode mode) { return new Session(mode == null ? MovementMode.PUBLIC_TRANSIT : mode); }
 
@@ -102,7 +111,33 @@ public class RouteTimeClient {
     private static String key(PlaceDraft a, PlaceDraft b) {
         return a.longitude()+","+a.latitude()+">"+b.longitude()+","+b.latitude();
     }
+    OptionalInt carArrivalMinutes(PlaceDraft from, PlaceDraft to) {
+        if (carKey.isBlank())
+            throw ApiException.badRequest("자동차 길찾기 인증 설정을 확인해야 해요. 도착 시각을 직접 선택할 수 있어요.");
+        if (from.latitude().equals(to.latitude()) && from.longitude().equals(to.longitude()))
+            return OptionalInt.empty();
+        try {
+            return fetch(from, to, MovementMode.CAR, arrivalHttp);
+        } catch (RestClientResponseException e) {
+            int status = e.getStatusCode().value();
+            log.warn("자동차 도착 시각 조회 실패: HTTP 상태={}", status);
+            if (status == 401 || status == 403)
+                throw ApiException.badRequest("자동차 길찾기 인증 또는 이용 권한을 확인해야 해요. 도착 시각을 직접 선택할 수 있어요.");
+            throw ApiException.badRequest("자동차 길찾기 응답에 문제가 있어요. 잠시 후 다시 조회하거나 도착 시각을 직접 선택해 주세요.");
+        } catch (ResourceAccessException e) {
+            log.warn("자동차 도착 시각 조회 실패: 연결 또는 응답 지연 ({})", e.getMostSpecificCause().getClass().getSimpleName());
+            throw ApiException.badRequest("자동차 길찾기 서버에 연결하지 못했거나 응답이 늦어요. 다시 조회하거나 도착 시각을 직접 선택해 주세요.");
+        } catch (RestClientException e) {
+            log.warn("자동차 도착 시각 조회 실패: 응답 처리 오류 ({})", e.getClass().getSimpleName());
+            throw ApiException.badRequest("자동차 길찾기 응답을 읽지 못했어요. 다시 조회하거나 도착 시각을 직접 선택해 주세요.");
+        }
+    }
+
     private OptionalInt fetch(PlaceDraft a, PlaceDraft b, MovementMode mode) {
+        return fetch(a, b, mode, http);
+    }
+
+    private OptionalInt fetch(PlaceDraft a, PlaceDraft b, MovementMode mode, RestClient http) {
         if (mode == MovementMode.CAR) {
             var uri = UriComponentsBuilder.fromUriString("https://apis-navi.kakaomobility.com/v1/directions")
                     .queryParam("origin", a.longitude()+","+a.latitude())

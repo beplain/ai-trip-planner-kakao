@@ -215,8 +215,9 @@ public class OpenAiItineraryClient {
                 var valid=ItineraryRules.stylesFor(probe);
                 styles=requested.stream().filter(valid::contains).toList();
             }
-            String reason=p.reason();
-            if(reason==null)reason=styles.contains("야경")?"야경 감상":styles.contains("힐링")?"휴식을 위한 방문":Objects.toString(p.category(),"장소")+" 방문";
+            String reason=p.reason()==null ? "" : p.reason().replaceAll("\\s+", " ").trim();
+            if(reason.length()>100)reason=reason.substring(0,100);
+            if(p.reason()==null)reason=styles.contains("야경")?"야경 감상":styles.contains("힐링")?"휴식을 위한 방문":Objects.toString(p.category(),"장소")+" 방문";
             return new AiItinerary.AiPlace(p.name(),p.searchQuery()==null||p.searchQuery().isBlank()
                     ?(request.destination()+" "+Objects.toString(p.name(),"")).trim():p.searchQuery(),
                     p.visitTime(),p.category(),reason,Objects.toString(p.note(),""),styles);
@@ -249,10 +250,10 @@ public class OpenAiItineraryClient {
                 - 같은 날의 장소는 서로 가까운 곳끼리 묶어 이동을 줄이고, 방문 순서대로 나열합니다. 숙소와 도착·출발 장소를 기준으로 먼 지역을 왕복하거나 같은 구역을 반복 방문하는 동선을 피하세요.
                 - visitTime은 "HH:mm" 24시간 형식이며 같은 날 안에서 오름차순입니다. 이동 시간을 감안한 추정치입니다.
                 - 좌표, 주소, 전화번호, 영업시간, URL은 절대 만들지 않습니다(서버가 카카오맵 검색으로 확인합니다).
-                - name은 실제 장소의 정확한 지점명만 작성하세요. searchQuery, reason, note는 서버가 처리하므로 출력하지 않습니다.
+                - name은 실제 장소의 정확한 지점명만 작성하세요. searchQuery와 note는 서버가 처리합니다. reason에는 해당 장소의 방문 매력을 짧은 한국어 한 문장(40자 안팎)으로 작성하세요. 영업시간·가격·예약 가능 여부는 쓰지 마세요.
                 - 국내 여행만 다룹니다.
                 - 1일차부터 마지막 날까지 전체 여행에서 같은 실제 장소를 반복하지 않습니다. 다른 시간·이름 표기·검색어로도 같은 장소를 다시 넣지 않습니다. 지점은 정확한 지점명을 명시합니다.
-                - alternatives에는 같은 스타일과 카테고리로 대체 가능한 실제 장소를 일차별 2~3곳만 넣습니다. 다른 날짜의 방문 장소와 중복되지 않게 준비합니다.
+                - alternatives는 반드시 빈 배열입니다. 대체 장소는 서버가 카카오맵에서 찾으므로 출력하지 않습니다. 방문 장소 수는 줄이지 마세요.
                 - 예산과 취향을 반영하되, 가격을 단정하지 않습니다.
                 """;
     }
@@ -284,13 +285,14 @@ public class OpenAiItineraryClient {
         Map<String,Object> properties=new LinkedHashMap<>();
         properties.put("name",str());properties.put("visitTime",str());
         properties.put("category",Map.of("type","string","enum",CATEGORIES));
+        properties.put("reason",str());
         if(request.styles()!=null&&request.styles().stream().anyMatch(style->Set.of("힐링","야경").contains(style)))
             properties.put("matchedStyles",Map.of("type","array","items",Map.of("type","string","enum",ItineraryRules.STYLES)));
         Map<String,Object> place=obj(properties);
         Map<String, Object> day = obj(Map.of(
                 "dayNumber", Map.of("type", "integer"),
                 "places", Map.of("type", "array", "items", place),
-                "alternatives", Map.of("type", "array", "items", place)));
+                "alternatives", Map.of("type", "array", "maxItems", 0, "items", place)));
         return obj(Map.of(
                 "title", str(),
                 "days", Map.of("type", "array", "items", day)));

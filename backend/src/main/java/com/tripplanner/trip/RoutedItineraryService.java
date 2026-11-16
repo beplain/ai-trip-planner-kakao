@@ -26,10 +26,22 @@ public class RoutedItineraryService {
 
     List<TripDraft> adjustOptions(List<TripDraft> drafts) { return adjustOptions(drafts,d->(p,time)->true); }
     List<TripDraft> adjustOptions(List<TripDraft> drafts, java.util.function.Function<TripDraft,java.util.function.BiPredicate<PlaceDraft,String>> eligibility) {
-        if(drafts.isEmpty())return List.of();
+        return adjustOptions(drafts, eligibility, null);
+    }
+    /** Look up every draft's current legs together. A null session starts that lookup immediately. */
+    RouteTimeClient.Session prefetch(List<TripDraft> drafts) {
+        if (drafts.isEmpty()) return routes.session(MovementMode.PUBLIC_TRANSIT);
         TravelDetails details = drafts.get(0).travelDetails();
         var session = routes.session(details == null ? MovementMode.PUBLIC_TRANSIT : details.movementMode());
-        return drafts.stream().map(draft -> adjust(draft,session,eligibility.apply(draft))).toList();
+        List<List<PlaceDraft>> paths = new ArrayList<>();
+        for (TripDraft draft : drafts) paths.addAll(dayPaths(draft));
+        session.prefetch(paths);
+        return session;
+    }
+    List<TripDraft> adjustOptions(List<TripDraft> drafts, java.util.function.Function<TripDraft,java.util.function.BiPredicate<PlaceDraft,String>> eligibility, RouteTimeClient.Session session) {
+        if(drafts.isEmpty())return List.of();
+        var ready = session == null ? prefetch(drafts) : session;
+        return drafts.stream().map(draft -> adjust(draft,ready,eligibility.apply(draft))).toList();
     }
 
     private TripDraft adjust(TripDraft draft, RouteTimeClient.Session session, java.util.function.BiPredicate<PlaceDraft,String> eligible) {
@@ -39,15 +51,7 @@ public class RoutedItineraryService {
             warnings.add("실제 경로 조회 키가 설정되지 않아 직선거리로 동선을 보정했습니다. 이동 시간은 확인되지 않았습니다.");
             return copy(draft, draft.days(), warnings);
         }
-        List<List<PlaceDraft>> paths = new ArrayList<>();
-        for (DayDraft day : draft.days()) {
-            List<PlaceDraft> path = new ArrayList<>();
-            PlaceDraft start = overnight(details,day.dayNumber(),true), end = overnight(details,day.dayNumber(),false);
-            if (start != null) path.add(start);
-            path.addAll(day.places());
-            if (end != null) path.add(end);
-            paths.add(path);
-        }
+        List<List<PlaceDraft>> paths = dayPaths(draft);
         session.prefetch(paths);
         // Read current legs first. Unknown legs must never make an unmeasured swap look faster.
         TripDraft optimized = TripRouteOptimizer.optimize(draft, (a, b) -> routeCost(session, a, b),eligible);
@@ -111,6 +115,19 @@ public class RoutedItineraryService {
         if (p.fixedEventId() == null) return 60;
         if (p.fixedEventId().equals("transport:arrival")) return d != null && d.transport() != null && d.transport().mode() == TransportMode.PLANE ? 60 : 30;
         return p.fixedEventId().startsWith("transport:") ? 0 : 15;
+    }
+    private static List<List<PlaceDraft>> dayPaths(TripDraft draft) {
+        TravelDetails details = draft.travelDetails();
+        List<List<PlaceDraft>> paths = new ArrayList<>();
+        for (DayDraft day : draft.days()) {
+            List<PlaceDraft> path = new ArrayList<>();
+            PlaceDraft start = overnight(details, day.dayNumber(), true), end = overnight(details, day.dayNumber(), false);
+            if (start != null) path.add(start);
+            path.addAll(day.places());
+            if (end != null) path.add(end);
+            paths.add(path);
+        }
+        return paths;
     }
     private static PlaceDraft overnight(TravelDetails d, int day, boolean start) {
         if (d != null && d.stays() != null) for (Stay s : d.stays())

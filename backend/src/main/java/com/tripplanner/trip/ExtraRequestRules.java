@@ -175,13 +175,32 @@ public final class ExtraRequestRules {
             .replaceAll("(?:일정에서|일정에|장소는|장소를|매장은|지점은)$","")
             .replaceAll("[은는을를]$","").replaceAll("(?:매장|지점|브랜드)$","").replaceAll("(?:꼭|반드시)$","");
     }
-    public record Visit(int day,String name,String category) {}
+    public record Visit(int day,String name,String category,String categoryPath) {
+        public Visit(int day,String name,String category) { this(day,name,category,null); }
+    }
     private static boolean inScope(Rule rule,int day,int days) {
         return rule.day()==0 || (rule.day()==-1?days:rule.day())==day;
     }
     public static boolean allowsAdditional(String request,String name,String category,int day,int days,List<Visit> previous) {
-        return parse(request).rules().stream().filter(r->r.kind().equals("EXACT") && inScope(r,day,days) && matches(r,name,category))
-            .allMatch(r->previous.stream().filter(v->inScope(r,v.day(),days) && (!r.daily() || v.day()==day) && matches(r,v.name(),v.category())).count()<r.value());
+        return allowsAdditional(request, new Visit(day,name,category), days, previous);
+    }
+
+    static boolean allowsAdditional(String request, Visit visit, int days, List<Visit> previous) {
+        return parse(request).rules().stream().filter(r -> r.kind().equals("EXACT") && inScope(r,visit.day(),days)
+                && matches(r,visit.name(),visit.category(),visit.categoryPath()))
+                .allMatch(r -> countMatches(r,visit.day(),days,previous) < r.value());
+    }
+
+    static boolean allowsRequestedMealRepeat(String request, Visit visit, int days, List<Visit> previous) {
+        return parse(request).rules().stream().anyMatch(r -> Set.of("INCLUDE","EXACT").contains(r.kind())
+                && r.value() > 1 && !CATEGORIES.containsKey(r.target()) && inScope(r,visit.day(),days)
+                && matches(r,visit.name(),visit.category(),visit.categoryPath())
+                && countMatches(r,visit.day(),days,previous) < r.value());
+    }
+
+    private static long countMatches(Rule rule, int day, int days, List<Visit> visits) {
+        return visits.stream().filter(v -> inScope(rule,v.day(),days) && (!rule.daily() || v.day()==day)
+                && matches(rule,v.name(),v.category(),v.categoryPath())).count();
     }
     public static List<com.tripplanner.ai.AiItinerary.AiPlace> includeSeeds(String request,String destination,int day,int days) {
         return parse(request).rules().stream().filter(r->Set.of("INCLUDE","EXACT").contains(r.kind()) && (r.day()==0 || r.day()==day || r.day()==-1 && day==days))
@@ -295,6 +314,11 @@ public final class ExtraRequestRules {
     public static int requiredPriority(String request,String name,String category) {
         return parse(request).rules().stream().anyMatch(r->Set.of("INCLUDE","EXACT").contains(r.kind()) && matches(r,name,category)) ? 10000 : 0;
     }
+    static int requiredPriority(String request, PlaceDraft place) {
+        return parse(request).rules().stream().anyMatch(r -> Set.of("INCLUDE","EXACT").contains(r.kind())
+                && matches(r,place.name(),place.category(),place.categoryPath())) ? 10000 : 0;
+    }
+
     public static void validateInput(String request,int days) {
         validateInput(request);
         for(Rule r:parse(request).rules()) if(r.day()>days)
@@ -309,10 +333,15 @@ public final class ExtraRequestRules {
             throw ApiException.badRequest("추가 요청에서 같은 장소를 포함하면서 제외할 수는 없어요: "+b.target());
     }
     private static boolean matches(Rule r,String name,String category) {
+        return matches(r,name,category,null);
+    }
+
+    private static boolean matches(Rule r,String name,String category,String categoryPath) {
         if(r.category()!=null && !r.category().isBlank() && !r.category().equals(category)) return false;
         String categoryTarget=CATEGORIES.get(r.target());
         if (categoryTarget!=null) return categoryTarget.equals(category);
         String n=key(name),t=key(r.target());
+        if ("식당".equals(category) && ("횟집".equals(t) || "회".equals(t))) return DraftMealPlanner.isFishRestaurant(name,categoryPath);
         return n.contains(t) || r.aliases()!=null && r.aliases().stream().anyMatch(a->n.contains(key(a))) || (t.equals("다이소") && n.contains("daiso")) || (t.equals("daiso") && n.contains("다이소"));
     }
     /** Used on actual map results before primary/alternative/fallback candidates are selected. */
@@ -341,10 +370,10 @@ public final class ExtraRequestRules {
                 if(r.day()!=0 && day.dayNumber()!=(r.day()==-1?days.size():r.day())) continue;
                 List<PlaceDraft> all=day.places()==null?List.of():day.places();
                 List<PlaceDraft> visits=all.stream().filter(v->v.fixedEventId()==null).toList();
-                long count=visits.stream().filter(v->v.verified() && matches(r,v.name(),v.category())).map(v->Objects.toString(v.placeId(),v.name())).distinct().count();
+                long count=visits.stream().filter(v->v.verified() && matches(r,v.name(),v.category(),v.categoryPath())).map(v->Objects.toString(v.placeId(),v.name())).distinct().count();
                 includeCount+=count;
                 boolean failed=switch(r.kind()) {
-                    case "EXCLUDE" -> all.stream().anyMatch(v->matches(r,v.name(),v.category()));
+                    case "EXCLUDE" -> all.stream().anyMatch(v->matches(r,v.name(),v.category(),v.categoryPath()));
                     case "INCLUDE" -> r.daily() && count<Math.max(1,r.value());
                     case "EXACT" -> r.daily() && count!=r.value();
                     case "MAX" -> visits.size()>r.value();
@@ -386,7 +415,7 @@ public final class ExtraRequestRules {
     private static String evidence(Rule r,List<DayDraft> days) {
         return switch(r.kind()) {
             case "EXCLUDE" -> "제외 조건: "+r.target()+" · 전체 "+days.size()+"일의 장소명·카테고리에서 확인했어요.";
-            case "INCLUDE", "EXACT" -> "포함 조건: "+r.target()+(r.kind().equals("EXACT")?" 정확히 ":" 최소 ")+Math.max(1,r.value())+"곳 · 방문 장소: "+days.stream().flatMap(d->d.places().stream()).filter(v->v.verified()&&matches(r,v.name(),v.category())).map(PlaceDraft::name).distinct().reduce((a,b)->a+", "+b).orElse("");
+            case "INCLUDE", "EXACT" -> "포함 조건: "+r.target()+(r.kind().equals("EXACT")?" 정확히 ":" 최소 ")+Math.max(1,r.value())+"곳 · 방문 장소: "+days.stream().flatMap(d->d.places().stream()).filter(v->v.verified()&&matches(r,v.name(),v.category(),v.categoryPath())).map(PlaceDraft::name).distinct().reduce((a,b)->a+", "+b).orElse("");
             case "MAX" -> "매일 일반 방문 장소가 "+r.value()+"곳 이하예요. 숙소·교통 고정 항목은 제외해요.";
             case "START" -> "모든 일반 방문이 "+TravelSchedule.clock(r.value())+" 이후에 시작해요.";
             case "END" -> "일반 방문을 60분으로 계산해 "+TravelSchedule.clock(r.value())+"까지 마쳐요.";

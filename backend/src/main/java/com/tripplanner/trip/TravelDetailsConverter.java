@@ -1,12 +1,16 @@
 package com.tripplanner.trip;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Converter;
 
 @Converter
 public class TravelDetailsConverter implements AttributeConverter<TripDtos.TravelDetails, String> {
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     @Override public String convertToDatabaseColumn(TripDtos.TravelDetails value) {
         if (value == null) return null;
         try { return JSON.writeValueAsString(value); }

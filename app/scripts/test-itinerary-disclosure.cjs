@@ -4,6 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 let active;
+let dimensions = { width: 390, fontScale: 1 };
 const jsx = (type, props) => ({ type, props });
 const modules = {};
 function load(file) {
@@ -13,11 +14,12 @@ function load(file) {
   }).outputText, { exports: output, require(id) {
     if (id === 'react') return { useState(initial) { const state = active; if (!('value' in state)) state.value = initial; return [state.value, value => { state.value = typeof value === 'function' ? value(state.value) : value; }]; } };
     if (id === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'Fragment' };
-    if (id === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Button', Linking: {} };
+    if (id === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Button', Linking: {}, StyleSheet: { flatten: style => style }, useWindowDimensions: () => dimensions };
     if (id === '@/lib/styles') return { C: { primary: '#00f', sub: '#888' }, s: {} };
     if (id.endsWith('business-hours')) return { businessHoursNotice: () => ({ label: '운영시간 확인됨.', verified: true }) };
     if (id.endsWith('user-message')) return { userMessage: value => value };
     if (id === '@/lib/kakao-map') return {};
+    if (id === './fit-text') return modules.fitText;
     if (id === './itinerary-disclosure') return modules.disclosure;
     throw Error(id);
   } });
@@ -34,6 +36,18 @@ function text(tree) {
   if (Array.isArray(tree)) return tree.map(text).join(' ');
   return text(tree.props?.children);
 }
+modules.fitText = load('fit-text.tsx');
+const { FitText } = modules.fitText;
+dimensions = { width: 300, fontScale: 1 };
+let fitted = FitText({ fontSize: 16, children: '긴 장소 이름' });
+assert.equal(fitted.props.style[1].fontSize, 16 * 0.9);
+assert.equal(fitted.props.numberOfLines, 2);
+assert.equal(fitted.props.adjustsFontSizeToFit, true);
+dimensions = { width: 900, fontScale: 1.5 };
+fitted = FitText({ fontSize: 16, children: '긴 장소 이름' });
+assert.equal(fitted.props.style[1].fontSize, 16 * 1.1);
+assert.equal(fitted.props.numberOfLines, undefined);
+assert.equal(fitted.props.adjustsFontSizeToFit, false);
 modules.disclosure = load('itinerary-disclosure.tsx');
 const { PlaceCard } = load('place-card.tsx');
 const place = { placeId: '1', name: '남천리녹차팥빙수', address: '부산 수영구 수영로 394번길 29', visitTime: '12:20', category: '카페', verified: true, reason: '추천 이유', note: '메모' };
@@ -84,3 +98,12 @@ assert.equal(nodes(day2.render()).find(node => node.type === 'Button').props.acc
 nodes(dayTree).find(node => node.type === 'Button').props.onPress();
 assert.equal(nodes(day1.render()).find(node => node.type === 'Button').props.accessibilityState.expanded, true);
 process.stdout.write('Independent day collapse and place state preservation checks passed.\n');
+
+const legacy = PlaceCard({ place: { ...place, reason: '카카오맵에서 확인한 장소로 이동 가능한 시간대에 배치했습니다.',
+  note: '임시휴무는 방문 전 확인해주세요.' }, index: 0, isLast: true, editable: false });
+const legacyVisit = instance(nodes(legacy).find(node => node.type === modules.disclosure.ItineraryDisclosure).props);
+nodes(legacyVisit.render()).find(node => node.type === 'Button').props.onPress();
+const legacyText = text(legacyVisit.render());
+assert.match(legacyText, /임시휴무는 방문 전 확인해 주세요\.\s+💡\s+커피나 디저트/);
+assert.doesNotMatch(legacyText, /이동 가능한 시간대/);
+assert.equal(legacyText.match(/임시휴무/g).length, 1);

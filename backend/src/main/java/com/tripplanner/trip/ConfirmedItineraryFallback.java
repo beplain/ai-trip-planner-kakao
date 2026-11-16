@@ -95,13 +95,13 @@ final class ConfirmedItineraryFallback {
                         || known.containsKey(h.placeId()) || recommendations.values().stream().anyMatch(p -> ItineraryRules.nameKey(p.name(), request.destination()).equals(name))) continue;
                 List<ExtraRequestRules.Visit> counted=new ArrayList<>();
                 for(DayDraft previousDay:days) for(PlaceDraft previous:previousDay.places()) if(previous.fixedEventId()==null)
-                    counted.add(new ExtraRequestRules.Visit(previousDay.dayNumber(),previous.name(),previous.category()));
-                for(PlaceDraft current:known.values()) counted.add(new ExtraRequestRules.Visit(n,current.name(),current.category()));
-                if(!ExtraRequestRules.allowsAdditional(input.request(),h.name(),seed.place().category(),n,request.days(),counted)) continue;
+                    counted.add(new ExtraRequestRules.Visit(previousDay.dayNumber(),previous.name(),previous.category(),previous.categoryPath()));
+                for(PlaceDraft current:known.values()) counted.add(new ExtraRequestRules.Visit(n,current.name(),current.category(),current.categoryPath()));
+                if(!ExtraRequestRules.allowsAdditional(input.request(),new ExtraRequestRules.Visit(n,h.name(),seed.place().category(),h.categoryName()),request.days(),counted)) continue;
                 var p = seed.place();
                 String time = p.visitTime() == null ? "10:00" : p.visitTime();
                 var confirmed = ExtraRequestRules.annotateMeal(new PlaceDraft(h.placeId(), h.name(), h.address(), h.lat(), h.lng(), time,
-                        "카카오맵에서 확인한 장소로 이동 가능한 시간대에 배치했습니다.", "임시휴무는 방문 전 확인해주세요.", p.category(), true, h.placeUrl(), h.phone(),null,h.categoryName()),input.request(),n,request.days());
+                        null, null, p.category(), true, h.placeUrl(), h.phone(),null,h.categoryName()),input.request(),n,request.days());
                 known.put(h.placeId(), confirmed);
                 recommendations.put(h.placeId(), new AiPlace(h.name(), h.placeId(), time, p.category(), confirmed.reason()+" "+Objects.toString(confirmed.categoryPath(),""), confirmed.note(), p.matchedStyles()));
             }

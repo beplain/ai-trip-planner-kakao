@@ -12,8 +12,8 @@ import { C, s } from '@/lib/styles';
 
 const JS_KEY = process.env.EXPO_PUBLIC_KAKAO_JS_KEY ?? '';
 
-function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging' }: {
-  initialDestination: string; onSelect: (destination: string) => void; onClose: () => void; onPlaceSelect?: (place: LodgingPlace) => void; placeKind?: 'lodging' | 'transport';
+function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging', centerOnUser = false, initialRegion, initialCenter }: {
+  initialDestination: string; onSelect: (destination: string) => void; onClose: () => void; onPlaceSelect?: (place: LodgingPlace) => void; placeKind?: 'lodging' | 'transport'; centerOnUser?: boolean; initialRegion?: string; initialCenter?: Pick<LodgingPlace, 'latitude' | 'longitude'>;
 }) {
   const lodging = !!onPlaceSelect;
   const [selectedPlace, setSelectedPlace] = useState<LodgingPlace | null>(null);
@@ -27,12 +27,15 @@ function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging'
   const [locating, setLocating] = useState(false);
   const [position, setPosition] = useState<Location.LocationObject | null>(null);
   const locationLock = useRef(false);
+  const initialLocationRequested = useRef(false);
+  const mapInteraction = useRef(0);
   const mounted = useRef(true);
   const searchInput = useRef<TextInputInstance>(null);
   const suppressKeyboard = useRef(true);
   const web = useRef<WebView<Record<never, never>>>(null);
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const html = useMemo(() => lodging ? buildLodgingMapHtml(JS_KEY, placeKind) : buildDestinationMapHtml(JS_KEY), [lodging, placeKind]);
+  const html = useMemo(() => lodging ? buildLodgingMapHtml(JS_KEY, placeKind, initialRegion, initialCenter)
+    : buildDestinationMapHtml(JS_KEY), [lodging, placeKind, initialRegion, initialCenter]);
 
   useEffect(() => {
     if (ready || fatal || !JS_KEY) return;
@@ -58,8 +61,9 @@ function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging'
     Keyboard.dismiss();
   }
 
-  async function locate() {
-    if (!ready || fatal || locationLock.current) return;
+  async function locate(centerOnly = false) {
+    if (fatal || locationLock.current) return;
+    const interaction = mapInteraction.current;
     dismissSearchKeyboard(); locationLock.current = true; setLocating(true);
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -82,10 +86,11 @@ function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging'
         Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
         new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('위치 확인 시간이 초과됐어요. 실외나 창가에서 다시 시도해 주세요.')), 20000); }),
       ]);
-      if (!mounted.current) return;
+      if (!mounted.current || (centerOnly && interaction !== mapInteraction.current)) return;
       const { latitude, longitude, accuracy } = current.coords;
-      setPosition(current); waitForSelection();
-      web.current?.injectJavaScript(`window.showDestinationUserLocation(${JSON.stringify({ latitude, longitude, accuracy })}); true;`);
+      setPosition(current);
+      if (!centerOnly) waitForSelection();
+      web.current?.injectJavaScript(`window.showDestinationUserLocation(${JSON.stringify({ latitude, longitude, accuracy })}, ${centerOnly}); true;`);
     } catch (e) {
       if (mounted.current) Alert.alert('위치를 확인하지 못했어요', userMessage(e instanceof Error ? e.message : null, '위치 권한과 인터넷 연결을 확인하고 다시 시도해 주세요.'));
     } finally {
@@ -102,6 +107,7 @@ function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging'
   }
   function search() {
     if (!ready || fatal || !query.trim()) return;
+    mapInteraction.current++;
     dismissSearchKeyboard(); waitForSelection();
     const argument = JSON.stringify(query.trim()).replace(/</g, '\\u003c');
     web.current?.injectJavaScript(`window.searchDestination(${argument}); true;`);
@@ -112,9 +118,13 @@ function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging'
     if (!message || typeof message !== 'object') return;
     if (message.type === 'ready') {
       setReady(true);
+      if (centerOnUser && !initialLocationRequested.current) {
+        initialLocationRequested.current = true;
+        void locate(true);
+      }
       return;
     }
-    if (message.type === 'resolving') { waitForSelection(); return; }
+    if (message.type === 'resolving') { mapInteraction.current++; waitForSelection(); return; }
     if (pending.current) clearTimeout(pending.current);
     setResolving(false);
     if (lodging && message.type === 'lodging-results') {
@@ -163,8 +173,12 @@ function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging'
           </View>
           <View style={{ flex: 1 }}>
             <WebView<Record<never, never>> ref={web} source={{ html, baseUrl: 'http://localhost' }} originWhitelist={['*']} javaScriptEnabled domStorageEnabled keyboardDisplayRequiresUserAction onTouchStart={dismissSearchKeyboard} onMessage={onMessage}
-              onError={() => { setFatal(true); setError('지도를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.'); }} style={{ flex: 1 }} />
+              onError={() => { setFatal(true); setError('지도를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.'); }} style={{ flex: 1, opacity: (initialRegion || initialCenter) && !ready && !fatal ? 0 : 1 }} />
             {!ready && !fatal && <View pointerEvents="none" style={{ position: 'absolute', top: 24, alignSelf: 'center' }}><ActivityIndicator color={C.primary} /><Text style={s.mutedSmall}>지도 불러오는 중…</Text></View>}
+            {centerOnUser && !fatal && (!ready || locating) && <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center' }}>
+              <ActivityIndicator color={C.primary} />
+              <Text style={s.mutedSmall}>내 위치에서 지도를 여는 중…</Text>
+            </View>}
             <Pressable accessibilityRole="button" accessibilityLabel="GPS로 현재 위치 표시" disabled={!ready || fatal || locating}
               onPress={() => { void locate(); }}
               style={[s.smallButton, { position: 'absolute', top: 16, left: 12, minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, backgroundColor: '#fff' }, (!ready || fatal || locating) && s.disabled]}>
@@ -193,13 +207,13 @@ function PickerContent({ onSelect, onClose, onPlaceSelect, placeKind = 'lodging'
   );
 }
 
-export function DestinationMapPicker({ visible, initialDestination, onSelect, onClose, onPlaceSelect, placeKind = 'lodging' }: {
-  visible: boolean; initialDestination: string; onSelect: (destination: string) => void; onClose: () => void; onPlaceSelect?: (place: LodgingPlace) => void; placeKind?: 'lodging' | 'transport';
+export function DestinationMapPicker({ visible, initialDestination, onSelect, onClose, onPlaceSelect, placeKind = 'lodging', centerOnUser = false, initialRegion, initialCenter }: {
+  visible: boolean; initialDestination: string; onSelect: (destination: string) => void; onClose: () => void; onPlaceSelect?: (place: LodgingPlace) => void; placeKind?: 'lodging' | 'transport'; centerOnUser?: boolean; initialRegion?: string; initialCenter?: Pick<LodgingPlace, 'latitude' | 'longitude'>;
 }) {
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
       <SafeAreaProvider>
-        {visible && <PickerContent initialDestination={initialDestination} onSelect={onSelect} onClose={onClose} onPlaceSelect={onPlaceSelect} placeKind={placeKind} />}
+        {visible && <PickerContent initialDestination={initialDestination} onSelect={onSelect} onClose={onClose} onPlaceSelect={onPlaceSelect} placeKind={placeKind} centerOnUser={centerOnUser} initialRegion={initialRegion} initialCenter={initialCenter} />}
       </SafeAreaProvider>
     </Modal>
   );

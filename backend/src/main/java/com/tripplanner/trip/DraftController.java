@@ -25,6 +25,14 @@ public class DraftController {
                                                    @Valid @RequestBody TripDtos.RegenerateDraftRequest request) {
         return regeneration.options(id,request,CurrentUser.id(jwt));
     }
+    @PostMapping("/{id}/restore-generated")
+    public org.springframework.http.ResponseEntity<DraftRooms.RoomResponse> restoreGenerated(
+            @AuthenticationPrincipal Jwt jwt, @PathVariable String id,
+            @Valid @RequestBody TripDtos.RegenerateDraftRequest request) {
+        return drafts.restoreGenerated(id, request, CurrentUser.id(jwt)).map(org.springframework.http.ResponseEntity::ok)
+                .orElseGet(() -> org.springframework.http.ResponseEntity.noContent().build());
+    }
+
     @PostMapping("/{id}/regenerate-selection")
     public DraftRooms.RoomResponse selectRegenerated(@AuthenticationPrincipal Jwt jwt, @PathVariable String id,
                                                      @Valid @RequestBody TripDtos.SelectRegeneratedRequest request) {

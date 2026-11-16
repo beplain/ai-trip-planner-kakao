@@ -1,6 +1,6 @@
-import { router } from 'expo-router';
-import { useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, BackHandler, Keyboard, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { apiError } from '../../services/api';
@@ -22,6 +22,18 @@ export default function CreateRoute() {
 }
 
 
+const STEPS = [
+  { id: 'title', heading: '여행 이름을 지어볼까요?', hint: '비워두면 목적지와 여행 기간에 맞춰 이름을 만들어요.' },
+  { id: 'destination', heading: '어디로 떠나시나요?', hint: '지역 이름을 검색하거나 지도에서 선택하세요.' },
+  { id: 'period', heading: '언제 떠나시나요?', hint: '캘린더에서 시작일과 종료일을 선택하세요. 최대 7일까지 가능해요.' },
+  { id: 'movement', heading: '여행지에서 어떻게 이동하나요?', hint: '이동 방식에 맞춰 방문 순서를 계획해요.' },
+  { id: 'stays', heading: '어디에서 묵으시나요?', hint: '숙소가 정해지면 체크인·체크아웃 시각을 일정에 반영해요.' },
+  { id: 'transport', heading: '어떻게 오가시나요?', hint: '가는 편과 오는 편을 추가하면 도착과 출발 시각을 일정에 반영해요.' },
+  { id: 'budget', heading: '예산은 얼마인가요?', hint: '정해진 예산이 있으면 입력해 주세요.' },
+  { id: 'styles', heading: '어떤 여행을 하고 싶으세요?', hint: '원하는 여행 스타일을 여러 개 선택할 수 있어요.' },
+  { id: 'request', heading: '더 반영할 내용이 있나요?', hint: '꼭 가고 싶은 곳이나 피하고 싶은 장소 등을 적어 주세요. 여러 요청은 줄바꿈으로 구분해 주세요.' },
+] as const;
+
 function CreateScreen() {
   const [travelDetails, setTravelDetails] = useState<TravelDetails>(DEFAULT_TRAVEL_DETAILS);
   const [title, setTitle] = useState('');
@@ -33,6 +45,44 @@ function CreateScreen() {
   const [request, setRequest] = useState('');
   const [busy, setBusy] = useState<'generate' | null>(null);
   const lock = useRef(false);
+  const [stepIndex, setStepIndex] = useState(0);
+  const step = STEPS[stepIndex];
+  const lastStep = stepIndex === STEPS.length - 1;
+  const canSkip = (step.id === 'title' && !title.trim())
+    || (step.id === 'stays' && !travelDetails.stays?.length)
+    || (step.id === 'transport' && !travelDetails.transport);
+  const days = tripDayCount(startDate, endDate);
+
+  const previousStep = useCallback(() => {
+    Keyboard.dismiss();
+    setStepIndex((index) => Math.max(0, index - 1));
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (lock.current) return true;
+      if (stepIndex === 0) return false;
+      previousStep();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [previousStep, stepIndex]));
+
+  function nextStep() {
+    if (step.id === 'destination' && !destinationRegion(destination)) {
+      return Alert.alert('목적지를 선택해 주세요', '예: 경주, 양양, 서울특별시');
+    }
+    if (step.id === 'period' && !(days >= 1 && days <= 7)) {
+      return Alert.alert('여행 기간을 선택해 주세요', step.hint);
+    }
+    if (step.id === 'stays' || step.id === 'transport') {
+      const details = step.id === 'stays' ? { ...travelDetails, transport: undefined } : { ...travelDetails, stays: [] };
+      const error = travelDetailsError(details, days, startDate);
+      if (error) return Alert.alert('입력한 정보를 확인해 주세요', error);
+    }
+    Keyboard.dismiss();
+    setStepIndex((index) => Math.min(index + 1, STEPS.length - 1));
+  }
 
   function toggleStyle(v: string) {
     setStyles((cur) => (cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v]));
@@ -46,6 +96,7 @@ function CreateScreen() {
     const detailsError = travelDetailsError(travelDetails, dayCount, startDate);
     if (detailsError) return Alert.alert('숙소·교통 정보를 확인해 주세요', detailsError);
     if (lock.current) return;
+    Keyboard.dismiss();
     lock.current = true; setBusy('generate');
     try {
       const result = await tripsApi.generateOptions({
@@ -80,46 +131,39 @@ function CreateScreen() {
 
   return (
     <SafeAreaView style={s.safe}>
-      <ScreenHeader title="새 여행 만들기" />
-      <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-        <Text style={s.eyebrow}>여행 계획의 첫 단계</Text>
-        <Text style={s.title}>어디로 떠나볼까요?</Text>
-        <Text style={s.subtitle}>조건을 입력하면 최대 3가지 일정 초안을 비교하고 선택할 수 있어요.</Text>
+      <ScreenHeader title="새 여행 만들기" onBack={stepIndex > 0 ? previousStep : undefined} />
+      <ScrollView key={step.id} style={{ flex: 1 }} contentContainerStyle={[s.content, { flexGrow: 1 }]} keyboardShouldPersistTaps="handled">
+        <Text style={s.eyebrow}>{stepIndex + 1} / {STEPS.length}</Text>
+        <View style={{ flexDirection: 'row', gap: 4, marginBottom: 28 }} aria-hidden>
+          {STEPS.map(({ id }, index) => (
+            <View key={id} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: index <= stepIndex ? C.primary : C.border }} />
+          ))}
+        </View>
+        <Text accessibilityRole="header" style={s.title}>{step.heading}</Text>
+        <Text style={s.subtitle}>{step.hint}</Text>
 
-        <Text style={s.label}>여행 이름</Text>
-        <TextInput value={title} onChangeText={setTitle} placeholder="예: 친구들과 떠나는 부산 여행" style={s.input} maxLength={100} />
-        <Text style={s.mutedSmall}>입력하지 않으면 여행 이름을 자동으로 만들어요.</Text>
-
-        <Text style={s.label}>목적지 <Text style={s.required}>*</Text></Text>
-        <DestinationInput value={destination} onChange={setDestination} />
-
-        <Text style={s.label}>여행 기간 <Text style={s.required}>*</Text></Text>
-        <TripPeriodInput start={startDate} end={endDate} onChange={(start, end) => { setStartDate(start); setEndDate(end); }} />
-
-        <TravelDetailsInput destination={destination} value={travelDetails} onChange={setTravelDetails} startDate={startDate} days={tripDayCount(startDate, endDate)} />
-
-        <Text style={s.label}>예산</Text>
-        <BudgetInput value={budget} onChange={setBudget} />
-
-        <Text style={s.label}>여행 스타일</Text>
-        <View style={s.chips}>
+        {step.id === 'title' && <TextInput accessibilityLabel="여행 이름" value={title} onChangeText={setTitle}
+          placeholder="예: 친구들과 떠나는 부산 여행" style={s.input} maxLength={100} />}
+        {step.id === 'destination' && <DestinationInput value={destination} onChange={setDestination} />}
+        {step.id === 'period' && <TripPeriodInput start={startDate} end={endDate} onChange={(start, end) => { setStartDate(start); setEndDate(end); }} />}
+        {(step.id === 'movement' || step.id === 'stays' || step.id === 'transport') && (
+          <TravelDetailsInput section={step.id} destination={destination} value={travelDetails} onChange={setTravelDetails} startDate={startDate} days={days} />
+        )}
+        {step.id === 'budget' && <BudgetInput value={budget} onChange={setBudget} />}
+        {step.id === 'styles' && <View style={s.chips}>
           {STYLE_OPTIONS.map((item) => (
-            <Pressable key={item} onPress={() => toggleStyle(item)} style={[s.chip, styles.includes(item) && s.chipActive]}>
+            <Pressable key={item} accessibilityRole="button" accessibilityState={{ selected: styles.includes(item) }}
+              onPress={() => toggleStyle(item)} style={[s.chip, styles.includes(item) && s.chipActive]}>
               <Text style={[s.chipText, styles.includes(item) && s.chipTextActive]}>{styleLabel(item)}</Text>
             </Pressable>
           ))}
-        </View>
+        </View>}
+        {step.id === 'request' && <TextInput accessibilityLabel="추가 요청" value={request} onChangeText={setRequest}
+          placeholder="예: 마지막 날 저녁식사는 삼겹살로 추천해줘" style={[s.input, s.inputMulti]} multiline maxLength={200} />}
 
-        <Text style={s.label}>추가 요청</Text>
-        <Text style={s.mutedSmall}>장소 제외·필수 방문·날짜별 식사와 음식 종류·방문 시간 등을 요청할 수 있어요. 여러 요청은 줄바꿈으로 구분해 주세요.</Text>
-        <TextInput value={request} onChangeText={setRequest} placeholder="예: 마지막 날 저녁식사는 삼겹살로 추천해줘" style={[s.input, s.inputMulti]} multiline maxLength={200} />
-
-        <View style={s.infoBox}>
-          <Text style={s.infoTitle}>이렇게 만들어져요</Text>
-          <Text style={s.infoText}>카카오맵에서 확인한 장소로 여행 일정을 제안해 드려요. 이동 최소형·최소 방문형·다양한 방문형을 비교하고 초안 화면에서 유형을 전환하며 각각 수정할 수 있어요.</Text>
-        </View>
-        <Pressable disabled={!!busy} style={[s.primary, !!busy && s.disabled]} onPress={generate}>
-          <Text style={s.primaryText}>AI 초안 3가지 비교하기</Text>
+        <View style={{ flex: 1, minHeight: 28 }} />
+        <Pressable accessibilityRole="button" style={[s.primary, { marginBottom: 0 }]} onPress={lastStep ? generate : nextStep}>
+          <Text style={s.primaryText}>{lastStep ? 'AI 초안 3가지 비교하기' : canSkip ? '건너뛰기' : '다음'}</Text>
         </Pressable>
       </ScrollView>
     </SafeAreaView>

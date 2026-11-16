@@ -171,7 +171,7 @@ function TripMapScreen() {
     try { msg = JSON.parse(e.nativeEvent.data); } catch { return; }
     if (msg.type === 'ready') {
       setSelected(null); setMapError(null); setMapReady(true);
-      webRef.current?.injectJavaScript(`window.renderPlaces(${JSON.stringify(groups)}); true;`);
+      webRef.current?.injectJavaScript(`window.renderPlaces(${JSON.stringify(groups)}); window.renderRoutes(${JSON.stringify(routes)}); true;`);
     }
     else if (msg.type === 'select' && msg.key) setSelected(lookup.get(msg.key) ?? null);
     else if (msg.type === 'error') {

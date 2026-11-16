@@ -33,8 +33,10 @@ public class TransportArrivalService {
         }
         if (t.mode() != TransportMode.CAR && t.mode() != TransportMode.BUS)
             throw ApiException.badRequest("기차는 승차권의 도착 시각을 직접 선택해 주세요.");
-        var session = routes.session(t.mode() == TransportMode.CAR ? MovementMode.CAR : MovementMode.PUBLIC_TRANSIT);
-        var duration = session.minutes(place(t.originLocation()), place(t.arrivalLocation()));
+        var from = place(t.originLocation());
+        var to = place(t.arrivalLocation());
+        var duration = t.mode() == TransportMode.CAR ? routes.carArrivalMinutes(from, to)
+                : routes.session(MovementMode.PUBLIC_TRANSIT).minutes(from, to);
         if (duration.isEmpty() || duration.getAsInt() <= 0)
             throw ApiException.badRequest("이 구간의 이동 시간을 확인하지 못했어요. 도착 시각을 직접 선택해 주세요.");
         int arrival = start + duration.getAsInt();

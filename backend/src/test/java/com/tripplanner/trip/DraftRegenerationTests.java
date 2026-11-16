@@ -86,6 +86,30 @@ class DraftRegenerationTests {
         assertThrows(ApiException.class,()->drafts.save(roomWithRequest.id(),roomWithRequest.version(),owner));
         assertNull(drafts.get(roomWithRequest.id(),owner).savedTripId());
     }
+    @Test void restoresPreviousStylesWithOriginalVariantsAndActiveSelection() {
+        var created = drafts.create(variantBundle(), owner);
+        var original = drafts.switchOption(created.id(), new SwitchDraftOptionRequest(created.version(), "relaxed"), owner);
+        var first = original.draft();
+        var changedDraft = new TripDraft(first.title(), first.destination(), first.startDate(), first.endDate(),
+                first.budget(), List.of("쇼핑", "힐링"), first.days(), first.source(), first.warnings());
+        var changed = drafts.replaceGenerated(created.id(), original.version(), changedDraft, owner);
+        var restore = new RegenerateDraftRequest(changed.version(), first.title(),
+                new GenerateRequest(first.destination(), first.startDate(), first.days().size(), first.budget(), first.styles(), null));
+
+        assertThrows(ApiException.class, () -> drafts.restoreGenerated(created.id(), restore, viewer));
+        var differentBudget = new RegenerateDraftRequest(changed.version(), first.title(),
+                new GenerateRequest(first.destination(), first.startDate(), first.days().size(), "100,000원", first.styles(), null));
+        assertTrue(drafts.restoreGenerated(created.id(), differentBudget, owner).isEmpty());
+        assertEquals(changed.draft(), drafts.get(created.id(), owner).draft());
+
+        var restored = drafts.restoreGenerated(created.id(), restore, owner).orElseThrow();
+        assertEquals(first, restored.draft());
+        assertTrue(restored.version() > changed.version());
+        assertEquals(first, drafts.get(created.id(), owner).draft());
+        assertEquals(0, generator.calls);
+        assertThrows(ApiException.class, () -> drafts.restoreGenerated(created.id(), restore, owner));
+    }
+
     @Test void variantsPersistAcrossEditsSwitchingRenameAndReload() {
         var created = drafts.create(variantBundle(),owner);
         var first = created.draft(); var old = first.days().get(0).places().get(0);

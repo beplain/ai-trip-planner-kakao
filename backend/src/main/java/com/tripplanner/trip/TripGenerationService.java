@@ -42,7 +42,11 @@ public class TripGenerationService {
     private BusinessHoursService businessHours;
     private GoogleHoursScheduler googleHours;
     private boolean scheduleMeals;
-    private final ExecutorService pool = Executors.newFixedThreadPool(6);
+    private final ExecutorService pool = Executors.newFixedThreadPool(16, task -> {
+        Thread thread = new Thread(task, "itinerary-generation");
+        thread.setDaemon(true);
+        return thread;
+    });
     // Search orchestration waits for tasks in pool, so it must run on a separate executor.
     private final ExecutorService restaurantSearches = Executors.newFixedThreadPool(2);
 
@@ -84,29 +88,26 @@ public class TripGenerationService {
 
     public TripDraft generate(GenerateRequest req) {
         if(googleHours!=null)googleHours.requireConfigured();
-        long transportStarted=System.nanoTime();
-        try {req = resolveTransport(req);} finally {logStage("교통편확인",transportStarted);}
-        String originalRequest=req.request();
-        long interpretationStarted=System.nanoTime();
-        String interpreted;
-        try {interpreted=openAi.interpretRequest(originalRequest,req.days());}
-        finally {logStage("추가요청해석",interpretationStarted);}
-        req=new GenerateRequest(req.destination(),req.startDate(),req.days(),req.budget(),req.styles(),interpreted,req.travelDetails());
+        Prepared prepared = prepare(req);
+        req = prepared.request();
+        String originalRequest = prepared.originalRequest();
         long started = System.nanoTime();
         try {
             Map<Integer,List<PlaceDraft>> candidates=new HashMap<>();
-            var lookups=new com.tripplanner.place.GenerationPlaces(places,ExtraRequestRules.mealSearches(req.request(),req.destination().trim(),req.days()),req.destination());
-            var generated = generateWithRestaurants(req, lookups, candidates);
-            TripDraft base = generated.draft().withRequestMetadata(originalRequest, interpreted);
+            var generated = generateWithRestaurants(req, prepared.lookups(), candidates, prepared.restaurants());
+            TripDraft base = generated.draft().withRequestMetadata(originalRequest, prepared.interpretedRequest());
             TripDraft result;
             var restaurants = generated.restaurants();
             var hours=googleHours==null?null:googleHours.session();
-            if (scheduleMeals) base = scheduleMeals(base, candidates, restaurants, hours, 0);
+            if (scheduleMeals) {
+                if (hours != null) hours.prefetchPlaces(DraftMealPlanner.likelyLookups(base, candidates, restaurants, 0));
+                base = scheduleMeals(base, candidates, restaurants, hours, 0);
+            }
             if(hours!=null) {
                 hours.prefetch(List.of(base));
-                var prepared=hours.repair(base,candidates);
-                var routed=routedItinerary==null?prepared:routedItinerary.adjust(prepared,(p,time)->hours.fits(prepared,p,time));
-                result=hours.verify(routed);
+                var repaired = hours.repair(base, candidates);
+                var routed = routedItinerary == null ? repaired : routedItinerary.adjustOptions(List.of(repaired), d -> (p, time) -> hours.fits(d, p, time)).get(0);
+                result = hours.verify(routed);
             } else result=checkHours(route(base));
             if (scheduleMeals) DraftMealPlanner.require(result);
             return ExtraRequestRules.require(result);
@@ -124,23 +125,17 @@ public class TripGenerationService {
     }
     private TripDtos.DraftOptions generateOptionsMeasured(GenerateRequest req) {
         if(googleHours!=null)googleHours.requireConfigured();
-        long transportStarted=System.nanoTime();
-        try {req = resolveTransport(req);} finally {logStage("교통편확인",transportStarted);}
-        String originalRequest=req.request();
-        long interpretationStarted=System.nanoTime();
-        String interpreted;
-        try {interpreted=openAi.interpretRequest(originalRequest,req.days());}
-        finally {logStage("추가요청해석",interpretationStarted);}
-        req=new GenerateRequest(req.destination(),req.startDate(),req.days(),req.budget(),req.styles(),interpreted,req.travelDetails());
+        Prepared prepared = prepare(req);
+        req = prepared.request();
+        String originalRequest = prepared.originalRequest();
         long started = System.nanoTime();
         try {
             Map<Integer,List<PlaceDraft>> candidates = new HashMap<>();
-            var lookups=new com.tripplanner.place.GenerationPlaces(places,ExtraRequestRules.mealSearches(req.request(),req.destination().trim(),req.days()),req.destination());
-            var generated = generateWithRestaurants(req, lookups, candidates);
-            TripDraft base = generated.draft().withRequestMetadata(originalRequest, interpreted);
+            var generated = generateWithRestaurants(req, prepared.lookups(), candidates, prepared.restaurants());
+            TripDraft base = generated.draft().withRequestMetadata(originalRequest, prepared.interpretedRequest());
             long composeStarted=System.nanoTime();
             List<TripDraft> composed;
-            try {composed = composeOptions(base,candidates,req,lookups);}
+            try {composed = composeOptions(base,candidates,req,prepared.lookups());}
             finally {logStage("유형구성",composeStarted);}
             List<PlaceDraft> restaurants = generated.restaurants();
             GoogleHoursScheduler.Session googleSession=googleHours==null?null:googleHours.session();
@@ -225,37 +220,84 @@ public class TripGenerationService {
     private record GeneratedDraft(TripDraft draft, List<PlaceDraft> restaurants) {}
 
     private GeneratedDraft generateWithRestaurants(GenerateRequest request, KakaoLocalClient lookups,
-                                                    Map<Integer, List<PlaceDraft>> candidates) {
+                                                    Map<Integer, List<PlaceDraft>> candidates, Future<List<PlaceDraft>> restaurants) {
         validateGenerationRequest(request);
-        if (!scheduleMeals) return new GeneratedDraft(generateMeasured(request, lookups, candidates), List.of());
-
-        var search = restaurantSearches.submit(() -> {
-            long started = System.nanoTime();
-            try { return DraftMealPlanner.search(request.destination().trim(), request.days(), lookups, pool); }
-            finally { logStage("식당후보검색", started); }
-        });
         try {
             TripDraft draft = generateMeasured(request, lookups, candidates);
+            if (!scheduleMeals) return new GeneratedDraft(draft, List.of());
             long waitStarted = System.nanoTime();
-            try { return new GeneratedDraft(draft, search.get()); }
-            catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw ApiException.badRequest("식당 후보 조회가 중단됐습니다. 다시 시도해 주세요.");
-            } catch (ExecutionException e) {
-                if (e.getCause() instanceof RuntimeException failure) throw failure;
-                throw new IllegalStateException("식당 후보 조회 실패", e.getCause());
-            } finally {
-                logStage("식당후보대기", waitStarted);
-            }
+            try { return new GeneratedDraft(draft, join(restaurants, "식당 후보 조회가 중단됐습니다. 다시 시도해 주세요.")); }
+            finally { logStage("식당후보대기", waitStarted); }
         } finally {
-            if (!search.isDone()) search.cancel(true);
+            if (!restaurants.isDone()) restaurants.cancel(true);
         }
     }
+
+    private Prepared prepare(GenerateRequest req) {
+        String original = req.request();
+        String destination = req.destination().trim();
+        Future<GenerateRequest> transported = restaurantSearches.submit(() -> {
+            long stageStarted = System.nanoTime();
+            try { return resolveTransport(req); }
+            finally { logStage("교통편확인", stageStarted); }
+        });
+        Future<List<PlaceDraft>> restaurants = scheduleMeals
+                ? restaurantSearches.submit(() -> {
+                    long stageStarted = System.nanoTime();
+                    try {
+                        return DraftMealPlanner.search(destination, req.days(),
+                                new com.tripplanner.place.GenerationPlaces(places, Map.of(), destination), pool);
+                    } finally { logStage("식당후보검색", stageStarted); }
+                })
+                : CompletableFuture.completedFuture(List.of());
+        try {
+            long interpretationStarted = System.nanoTime();
+            String interpreted;
+            try { interpreted = openAi.interpretRequest(original, req.days()); }
+            finally { logStage("추가요청해석", interpretationStarted); }
+            GenerateRequest resolved = join(transported, "교통편 확인이 중단됐습니다. 다시 시도해 주세요.");
+            GenerateRequest ready = new GenerateRequest(resolved.destination(), resolved.startDate(), resolved.days(),
+                    resolved.budget(), resolved.styles(), interpreted, resolved.travelDetails());
+            var lookups = new com.tripplanner.place.GenerationPlaces(places,
+                    ExtraRequestRules.mealSearches(ready.request(), destination, ready.days()), destination);
+            return new Prepared(ready, original, interpreted, lookups, restaurants);
+        } catch (RuntimeException failure) {
+            transported.cancel(true);
+            restaurants.cancel(true);
+            throw failure;
+        }
+    }
+
+    private static <T> T join(Future<T> future, String interrupted) {
+        try { return future.get(); }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw ApiException.badRequest(interrupted);
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof RuntimeException failure) throw failure;
+            throw new IllegalStateException(interrupted, e.getCause());
+        }
+    }
+
+    private record Prepared(GenerateRequest request, String originalRequest, String interpretedRequest,
+                            KakaoLocalClient lookups, Future<List<PlaceDraft>> restaurants) {}
 
     private List<TripDraft> scheduleOptionMeals(TripDraft base, List<TripDraft> options,
                                                 Map<Integer, List<PlaceDraft>> candidates, List<PlaceDraft> restaurants,
                                                 GoogleHoursScheduler.Session hours) {
         long started = System.nanoTime();
+        if (hours != null) {
+            Map<String, PlaceDraft> warm = new LinkedHashMap<>();
+            for (int i = 0; i < options.size() && warm.size() < 36; i++) {
+                for (PlaceDraft place : DraftMealPlanner.likelyLookups(options.get(i), candidates, restaurants, i)) {
+                    warm.putIfAbsent(place.placeId(), place);
+                    if (warm.size() >= 36) break;
+                }
+            }
+            long warmStarted = System.nanoTime();
+            try { hours.prefetchPlaces(warm.values()); }
+            finally { logStage("영업시간선조회", warmStarted); }
+        }
         List<Callable<TripDraft>> jobs = new ArrayList<>();
         for (int i = 0; i < options.size(); i++) {
             int variant = i;
@@ -370,6 +412,7 @@ public class TripGenerationService {
         AiItinerary ai;
         String source;
         if (openAi.enabled()) {
+            prefetchThemePlaces(req, lookups);
             long aiStarted = System.nanoTime();
             AiItinerary raw;
             try { raw = openAi.generate(ir, feedback); }
@@ -436,7 +479,7 @@ public class TripGenerationService {
                             + "검색 가능한 다른 실제 장소와 대체 후보를 추천하세요.", ai);
                 }
                 out.add(verified);
-                requestVisits.add(new ExtraRequestRules.Visit(d.dayNumber(),verified.name(),verified.category()));
+                requestVisits.add(new ExtraRequestRules.Visit(d.dayNumber(),verified.name(),verified.category(),verified.categoryPath()));
                 resolved.add(new AiPlace(verified.name(), chosen.searchQuery(), verified.visitTime(), chosen.category(),
                         chosen.reason(), chosen.note(), chosen.matchedStyles()));
             }
@@ -477,6 +520,33 @@ public class TripGenerationService {
         result = TripRouteOptimizer.optimize(result);
         try { TravelSchedule.validateDraft(result); } catch (ApiException e) { throw new InvalidItinerary(e.getMessage(), ai); }
         return result;
+    }
+
+    /** Style searches overlap the AI call and fill the same request cache used by later verification. */
+    private void prefetchThemePlaces(GenerateRequest req, KakaoLocalClient lookups) {
+        if (!places.enabled()) return;
+        String destination = req.destination().trim();
+        List<String> terms = new ArrayList<>();
+        if (req.styles() != null) for (String style : req.styles()) terms.add(themeTerm(style));
+        terms.add("맛집");
+        terms.add("카페");
+        terms.add("관광명소");
+        for (String term : terms.stream().distinct().toList()) {
+            pool.submit(() -> {
+                try { lookups.search(destination + " " + term, lookups.resolveArea(destination).orElse(null), 15); }
+                catch (RuntimeException ignored) { /* The later verified search reports a hard failure if maps are unavailable. */ }
+            });
+        }
+    }
+
+    private static String themeTerm(String style) {
+        return switch (style) {
+            case "자연", "힐링" -> "공원";
+            case "문화" -> "박물관";
+            case "액티비티" -> "체험";
+            case "관광" -> "관광명소";
+            default -> style;
+        };
     }
 
     /** 모든 검색어를 병렬 조회 (중복 검색어는 1번만) */
@@ -524,7 +594,7 @@ public class TripGenerationService {
             if (h.placeId() == null || h.placeId().isBlank() || h.name() == null || h.name().isBlank()
                     || !Double.isFinite(h.lat()) || !Double.isFinite(h.lng()) || Math.abs(h.lat()) > 90 || Math.abs(h.lng()) > 180) continue;
             if (reservedMeals.containsKey(h.placeId()) && reservedMeals.get(h.placeId())!=day) continue;
-            if (!ExtraRequestRules.allows(extraRequest, h.name(), p.category()) || !ExtraRequestRules.allowsAdditional(extraRequest,h.name(),p.category(),day,days,requestVisits)) continue;
+            if (!ExtraRequestRules.allows(extraRequest, h.name(), p.category()) || !ExtraRequestRules.allowsAdditional(extraRequest,new ExtraRequestRules.Visit(day,h.name(),p.category(),h.categoryName()),days,requestVisits)) continue;
             if (!ExtraRequestRules.allowsMealHit(extraRequest,day,days,p.name(),p.category(),p.reason()+" "+p.searchQuery(),h.name(),h.categoryName())) continue;
             String resolvedName = ItineraryRules.nameKey(h.name(), destination);
             if (used.contains(h.placeId()) || usedNames.contains(resolvedName)) continue;

@@ -14,6 +14,26 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class DraftMealPlannerTests {
     @Test
+    void explicitFishRestaurantCountAllowsTwoDistinctPlacesWithTheSameMenu() throws Exception {
+        var request = ExtraRequestRules.structured(new com.fasterxml.jackson.databind.ObjectMapper().readTree("""
+                {"rules":[{"source":"횟집 2곳 추천해줘","kind":"EXACT","target":"횟집","value":2,
+                "daily":false,"day":0,"meal":"","category":"식당","aliases":[]}],"unknown":[]}
+                """));
+        var candidates = new java.util.ArrayList<>(restaurants());
+        candidates.add(0, new PlaceDraft("fish1", "바다수산", "경주시", 35.8, 129.2, "12:00",
+                null, null, "식당", true, null, null, null, "음식점 > 일식 > 회"));
+        candidates.add(1, place("fish2", "항구횟집", "12:00", "식당"));
+        candidates.add(2, place("fish3", "동해횟집", "12:00", "식당"));
+        var planned = DraftMealPlanner.plan(draft(request), Map.of(), candidates, (day, place) -> true, 0);
+
+        DraftMealPlanner.require(planned);
+        ExtraRequestRules.require(planned);
+        assertEquals(List.of("fish1", "fish2"), planned.days().stream().flatMap(day -> day.places().stream())
+                .filter(p -> "회".equals(DraftMealPlanner.dish(p))).map(PlaceDraft::placeId).toList());
+        assertThrows(ApiException.class, () -> DraftMealPlanner.require(planned.withRequestMetadata(null, null)));
+    }
+
+    @Test
     void schedulesEveryFeasibleMealAndDoesNotRepeatMenus() {
         var draft = draft(null);
         var planned = DraftMealPlanner.plan(draft, Map.of(), restaurants(), (day, place) -> true, 0);

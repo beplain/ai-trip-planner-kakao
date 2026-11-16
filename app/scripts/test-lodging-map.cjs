@@ -1,4 +1,3 @@
-/* global __dirname */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -16,16 +15,16 @@ for (const invalid of [null, {}, { ...place, latitude: NaN }, { ...place, placeI
 }
 const messages = [], searches = [], geocodes = [], categories = [], mapClicks = [];
 class Position { constructor(latitude, longitude) { this.latitude = latitude; this.longitude = longitude; } getLat() { return this.latitude; } getLng() { return this.longitude; } }
-class MapStub { getLevel() { return 5; } setCenter() {} setLevel() {} setBounds() {} panTo() {} addControl() {} getCenter() { return new Position(35, 129); } }
+class MapStub { constructor(_element, options) { this.center = options.center; this.level = options.level; } getLevel() { return this.level ?? 5; } setCenter(center) { this.center = center; } setLevel(level) { this.level = level; } setBounds() {} panTo() {} addControl() {} getCenter() { return this.center ?? new Position(35, 129); } }
 class Marker { setMap() {} }
 class InfoWindow { setContent() {} setPosition() {} open() {} close() {} }
-const context = { Number, String, document: { getElementById() {}, createElement() { return { style: {} }; } },
+const context = { Number, String, setTimeout, clearTimeout, document: { getElementById() {}, createElement() { return { style: {} }; } },
   ReactNativeWebView: { postMessage(value) { messages.push(JSON.parse(value)); } },
   kakao: { maps: { load(fn) { fn(); }, Map: MapStub, LatLng: Position, Marker, InfoWindow,
     LatLngBounds: class { extend() {} }, ZoomControl: class {}, ControlPosition: { RIGHT: 1 },
     event: { addListener(target, event, handler) { if(target instanceof MapStub && event === 'click')mapClicks.push(handler); } }, services: { Status: { OK: 'OK' }, SortBy: { DISTANCE: 'distance' },
       Places: class { keywordSearch(query, callback, options) { searches.push({ query, callback, options }); } categorySearch(code, callback, options) { categories.push({code,callback,options}); } },
-      Geocoder: class { coord2Address(lng,lat,callback) { geocodes.push({lng,lat,callback}); } },
+      Geocoder: class { addressSearch(query, callback) { geocodes.push({ query, callback }); } coord2Address(lng,lat,callback) { geocodes.push({lng,lat,callback}); } },
     },
   } },
 };
@@ -109,3 +108,26 @@ assert.deepEqual(Array.from(timeExports.TIME_MINUTES), [0, 10, 20, 30, 40, 50]);
 assert.equal(timeExports.formatWheelTime(9, 0), '09:00');
 assert.equal(timeExports.wheelTimeParts('23:59').minute, 50);
 console.log('Lodging message validation, SDK search filtering, selection and search-race checks passed.');
+
+const arrivalHtml = buildLodgingMapHtml('public-key', 'transport', '부산광역시');
+for (const script of arrivalHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)) {
+  if (script[1].trim()) vm.runInContext(script[1], context);
+}
+assert.equal(geocodes.at(-1).query, '부산광역시');
+const messagesBeforeCentering = messages.length;
+geocodes.at(-1).callback([{ x: '129.0756', y: '35.1796' }], 'OK');
+assert.equal(context.map.getCenter().getLat(), 35.1796);
+assert.equal(context.map.getCenter().getLng(), 129.0756);
+assert.equal(context.map.getLevel(), 8);
+assert.deepEqual(messages.slice(messagesBeforeCentering).map(message => message.type), ['ready']);
+console.log('Arrival map centers on the destination without selecting a place.');
+const returnHtml = buildLodgingMapHtml('public-key', 'transport', '부산광역시', { latitude: 35.115, longitude: 129.041 });
+const geocodesBeforeReturn = geocodes.length;
+for (const script of returnHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)) {
+  if (script[1].trim()) vm.runInContext(script[1], context);
+}
+assert.equal(context.map.getCenter().getLat(), 35.115);
+assert.equal(context.map.getCenter().getLng(), 129.041);
+assert.equal(context.map.getLevel(), 5);
+assert.equal(geocodes.length, geocodesBeforeReturn);
+assert.equal(messages.at(-1).type, 'ready');

@@ -70,7 +70,9 @@ function TripsTab() {
         <View style={s.welcome}>
           <Text style={s.eyebrowLight}>AI와 함께 계획하는 여행</Text>
           <Text style={s.welcomeTitle}>다음 여행은{'\n'}어디로 갈까요?</Text>
-          <Text style={s.welcomeSub}>목적지와 취향을 알려주면 AI가 일정 초안을 만들어 드려요.</Text>
+          <Text style={s.welcomeSub} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.55}>
+            목적지와 취향을 알려주면 AI가 일정 초안을 만들어 드려요.
+          </Text>
         </View>
         <Pressable style={s.primary} onPress={() => router.push('/create')}>
           <Text style={s.primaryText}>＋  AI로 새 여행 만들기</Text>

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.JsonToken;
 import java.io.IOException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tripplanner.common.ApiException;
 import com.tripplanner.trip.TripDtos.*;
@@ -141,7 +143,60 @@ public class DraftRooms {
     public RoomResponse replaceGenerated(String id, Long version, TripDraft generated, Long user) {
         var r = room(id, true); requireEditor(r, user); check(r, version);
         DraftVariants.validate(generated);
-        r.edit(encode(generated)); rooms.flush(); return response(r, user);
+        return replaceAndArchive(r, content(r), generated, history(r), user);
+    }
+
+    public Optional<RoomResponse> restoreGenerated(String id, RegenerateDraftRequest request, Long user) {
+        var room = room(id, true);
+        requireEditor(room, user);
+        check(room, request.version());
+        var current = content(room);
+        var target = conditions(request.input());
+        var history = history(room);
+        for (var saved : List.copyOf(history)) {
+            if (!conditions(saved).equals(target)) continue;
+            history.remove(saved);
+            var restored = new TripDraft(request.title().trim(), saved.destination(), saved.startDate(), saved.endDate(),
+                    saved.budget(), saved.styles(), saved.days(), saved.source(), saved.warnings(), saved.request(),
+                    saved.travelDetails(), saved.options(), saved.selectedOption(), saved.interpretedRequest());
+            return Optional.of(replaceAndArchive(room, current, restored, history, user));
+        }
+        return Optional.empty();
+    }
+
+    private RoomResponse replaceAndArchive(DraftDocument room, TripDraft previous, TripDraft replacement,
+                                           List<TripDraft> history, Long user) {
+        var previousConditions = conditions(previous);
+        history.removeIf(saved -> conditions(saved).equals(previousConditions));
+        history.add(0, previous);
+        room.replaceGenerated(encode(replacement), encode(history.stream().limit(10).toList()));
+        rooms.flush();
+        return response(room, user);
+    }
+
+    private List<TripDraft> history(DraftDocument room) {
+        return room.regenerationHistory() == null ? new ArrayList<>()
+                : new ArrayList<>(decode(room.regenerationHistory(), new TypeReference<List<TripDraft>>() {}));
+    }
+
+    private record Conditions(String destination, java.time.LocalDate startDate, int days, String budget,
+                              Set<String> styles, String request, JsonNode travelDetails) {}
+
+    private Conditions conditions(TripDraft draft) {
+        return conditions(new GenerateRequest(draft.destination(), draft.startDate(), draft.days().size(),
+                draft.budget(), draft.styles(), draft.request(), draft.travelDetails()));
+    }
+
+    private Conditions conditions(GenerateRequest input) {
+        JsonNode details = json.valueToTree(input.travelDetails());
+        if (details.path("transport") instanceof ObjectNode transport) {
+            // Auto-calculated arrival values can change between drafts with identical user inputs.
+            if (transport.path("arrivalAuto").asBoolean()) transport.remove("arrivalTime");
+            if (transport.path("returnArrivalAuto").asBoolean(true)) transport.remove("returnArrivalTime");
+        }
+        return new Conditions(input.destination().trim(), input.startDate(), input.days(),
+                Objects.toString(input.budget(), "").trim(), input.styles() == null ? Set.of() : Set.copyOf(input.styles()),
+                Objects.toString(input.request(), "").trim(), details);
     }
     public TripResponse save(String id, Long version, Long user) {
         var r = room(id, true); requireEditor(r, user);

@@ -15,7 +15,11 @@ export function parseLodgingPlace(value: unknown, allowMapPoint = false): Lodgin
     placeUrl: p.placeId.startsWith('point:') ? `https://map.kakao.com/link/map/${encodeURIComponent(p.name.trim())},${p.latitude},${p.longitude}` : `https://place.map.kakao.com/${p.placeId}` };
 }
 
-export function buildLodgingMapHtml(jsKey: string, kind: 'lodging' | 'transport' = 'lodging') {
+export function buildLodgingMapHtml(jsKey: string, kind: 'lodging' | 'transport' = 'lodging', initialRegion?: string,
+  initialCenter?: Pick<LodgingPlace, 'latitude' | 'longitude'>) {
+  const center = initialCenter && Number.isFinite(initialCenter.latitude) && Number.isFinite(initialCenter.longitude)
+    ? { latitude: initialCenter.latitude, longitude: initialCenter.longitude, level: 5 }
+    : { latitude: 36.5, longitude: 127.8, level: 13 };
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <style>html,body,#map{margin:0;padding:0;width:100%;height:100%}</style></head><body><div id="map"></div>
@@ -26,6 +30,7 @@ window.onerror=function(){post({type:'error',message:'장소 지도를 불러오
 <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(jsKey)}&libraries=services&autoload=false"
 onerror="post({type:'error',message:'지도를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'})"></script>
 <script>
+var initialRegion=${JSON.stringify(initialRegion?.trim() ?? '').replace(/</g, '\\u003c')};
 var lodgingOnly=${JSON.stringify(kind === 'lodging')};
 var map,places,geocoder,markers=[],results=[],revision=0,info,userPin;
 function clearResults(){markers.forEach(function(m){m.setMap(null);});markers=[];results=[];if(info)info.close();}
@@ -91,18 +96,35 @@ function search(query,nearby){
  },options);
 }
 window.searchDestination=function(query){search(query,false);};
-window.showDestinationUserLocation=function(p){
+window.showDestinationUserLocation=function(p,centerOnly){
  if(!map||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return;
  var pos=new kakao.maps.LatLng(p.latitude,p.longitude);map.setCenter(pos);map.setLevel(5);
  if(userPin)userPin.setMap(null);userPin=new kakao.maps.Marker({map:map,position:pos,title:'내 위치'});
+ if(centerOnly)return;
  if(lodgingOnly)search('숙소',true);else selectPoint(pos);
 };
 if(typeof kakao==='undefined'){post({type:'error',message:'지도를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'});}
 else{kakao.maps.load(function(){
- map=new kakao.maps.Map(document.getElementById('map'),{center:new kakao.maps.LatLng(36.5,127.8),level:13});
+ map=new kakao.maps.Map(document.getElementById('map'),{center:new kakao.maps.LatLng(${center.latitude},${center.longitude}),level:${center.level}});
  places=new kakao.maps.services.Places();geocoder=new kakao.maps.services.Geocoder();info=new kakao.maps.InfoWindow();
  if(!lodgingOnly)kakao.maps.event.addListener(map,'click',function(event){selectPoint(event.latLng);});
- map.addControl(new kakao.maps.ZoomControl(),kakao.maps.ControlPosition.RIGHT);post({type:'ready'});
+ map.addControl(new kakao.maps.ZoomControl(),kakao.maps.ControlPosition.RIGHT);
+ if(${center.level === 5} || !initialRegion){post({type:'ready'});return;}
+ var finished=false;
+ var timer=setTimeout(function(){finish();},3000);
+ function finish(point){
+  if(finished)return;
+  finished=true;clearTimeout(timer);
+  if(point){map.setCenter(new kakao.maps.LatLng(Number(point.y),Number(point.x)));map.setLevel(8);}
+  post({type:'ready'});
+ }
+ geocoder.addressSearch(initialRegion,function(data,status){
+  if(finished)return;
+  if(status===kakao.maps.services.Status.OK && data && data.length){finish(data[0]);return;}
+  places.keywordSearch(initialRegion,function(hits,keywordStatus){
+   finish(keywordStatus===kakao.maps.services.Status.OK && hits && hits[0]);
+  },{size:1});
+ });
 });}
 </script></body></html>`;
 }

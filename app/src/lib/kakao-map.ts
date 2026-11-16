@@ -56,7 +56,7 @@ export function buildKakaoMapHtml(jsKey: string) {
         onerror="post({type:'error',message:'sdk-load'})"></script>
 <script>
   var map = null, objs = [], pins = {}, userPin = null, userAccuracy = null;
-  var latestGroups = [], latestRoutes = [], lineEntries = [], renderQueued = false;
+  var latestGroups = [], latestRoutes = [], lineEntries = [], renderQueued = false, groupsChanged = false;
   function frame(fn){ (window.requestAnimationFrame || function(cb){ return setTimeout(cb, 16); })(fn); }
   function refreshLines(){ lineEntries.forEach(function(entry){ entry.line.setPath(entry.path); }); }
   function scheduleRender(){
@@ -67,7 +67,7 @@ export function buildKakaoMapHtml(jsKey: string) {
       var container = document.getElementById('map');
       if (!container.clientWidth || !container.clientHeight) return;
       map.relayout();
-      drawGroups(latestGroups);
+      if (groupsChanged) { drawGroups(latestGroups); groupsChanged = false; }
       drawRoutes();
       frame(refreshLines);
     }); });
@@ -96,9 +96,10 @@ export function buildKakaoMapHtml(jsKey: string) {
   };
   window.renderPlaces = function(groups){
     latestGroups = groups || [];
+    groupsChanged = true;
     scheduleRender();
   };
-  window.renderRoutes = function(routes){ latestRoutes = routes || []; if (map) drawRoutes(); };
+  window.renderRoutes = function(routes){ latestRoutes = routes || []; scheduleRender(); };
   function drawRoutes(){
     lineEntries.forEach(function(entry){ entry.line.setMap(null); }); lineEntries = [];
     var bounds = new kakao.maps.LatLngBounds(), count = 0;
@@ -108,10 +109,10 @@ export function buildKakaoMapHtml(jsKey: string) {
       var path = segment.points.map(function(p){ var pos = new kakao.maps.LatLng(p.latitude, p.longitude); bounds.extend(pos); count++; return pos; });
       var color = segment.mode === 'BUS' ? '#2563eb' : segment.mode === 'SUBWAY' ? '#16a34a' : segment.mode === 'WALKING' ? '#64748b' : segment.color;
       var line = new kakao.maps.Polyline({path:path,strokeWeight:4,strokeColor:color || '#4169E1',strokeOpacity:0.85,strokeStyle:segment.mode === 'WALKING' ? 'shortdash' : 'solid'});
-      line.setMap(map); lineEntries.push({line:line,path:path});
+      lineEntries.push({line:line,path:path});
     });
     if (count > 1) map.setBounds(bounds, 60, 40, 220, 40);
-    refreshLines();
+    lineEntries.forEach(function(entry){ entry.line.setMap(map); });
   }
   function drawGroups(groups){
     clearAll();

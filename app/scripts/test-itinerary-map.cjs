@@ -1,4 +1,3 @@
-/* global __dirname */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -14,6 +13,10 @@ let load, resized, relayouts = 0;
 const container = { clientWidth: 0, clientHeight: 0 };
 class Overlay { setMap(map) { this.map = map; } }
 class Line extends Overlay {
+  setMap(map) {
+    if (map) assert.ok(container.clientWidth && container.clientHeight && relayouts > 0, 'Attach routes after layout');
+    super.setMap(map);
+  }
   constructor(options) { super(); this.options = options; this.refreshes = 0; lines.push(this); }
   setPath(points) { this.points = points; this.refreshes++; }
 }
@@ -40,7 +43,12 @@ assert.equal(messages[0].type, 'ready');
 container.clientWidth = 390; container.clientHeight = 700;
 resized(); flush();
 assert.equal(lines.length, 0, 'Markers alone never draw a straight line');
+container.clientHeight = 0;
 context.renderRoutes([{ mode: 'CAR', color: '#4169E1', points: [{latitude:35,longitude:129},{latitude:35.04,longitude:129.02},{latitude:35.1,longitude:129.1}] }]);
+flush();
+assert.equal(lines.length, 0, 'Early routes wait without discarding their geometry');
+container.clientHeight = 700;
+resized(); flush();
 assert.equal(lines.length, 1); assert.equal(lines[0].options.strokeStyle, 'solid');
 assert.equal(lines[0].points.length, 3); assert.ok(relayouts > 0);
 const before = lines[0].refreshes; listeners.idle(); listeners.tilesloaded();
@@ -48,7 +56,8 @@ assert.equal(lines[0].refreshes, before + 2);
 context.renderPlaces(groups); flush();
 assert.equal(lines.at(-1).points.length, 3, 'Marker redraw preserves real route geometry');
 context.renderRoutes([{mode:'WALKING',points:[{latitude:35,longitude:129},{latitude:35.01,longitude:129.01}]}]);
+flush();
 assert.equal(lines.at(-1).options.strokeStyle, 'shortdash');
 assert.equal(lines.at(-1).options.strokeColor, '#64748b');
-context.renderRoutes([]); assert.equal(lines.at(-1).map, null, 'Unavailable routes clear old lines');
+context.renderRoutes([]); flush(); assert.equal(lines.at(-1).map, null, 'Unavailable routes clear old lines');
 process.stdout.write('Itinerary map geometry, loading and redraw checks passed.\n');

@@ -9,6 +9,7 @@ public class DraftDocument {
     @Column(nullable = false) private Long ownerId;
     @Lob @Column(nullable = false, columnDefinition = "LONGTEXT") private String content;
     @Lob @Column(nullable = false, columnDefinition = "LONGTEXT") private String participants;
+    @Lob @Column(columnDefinition = "LONGTEXT") private String regenerationHistory;
     @Version private Long version;
     private Long savedTripId;
     @Column(nullable = false) private Instant updatedAt;
@@ -18,6 +19,11 @@ public class DraftDocument {
         this.content = content; this.participants = participants; this.updatedAt = Instant.now();
     }
     void edit(String content) { this.content = content; updatedAt = Instant.now(); }
+    String regenerationHistory() { return regenerationHistory; }
+    void replaceGenerated(String content, String history) {
+        edit(content);
+        regenerationHistory = history;
+    }
     void participants(String participants) { this.participants = participants; updatedAt = Instant.now(); }
     void finish(Long tripId) { this.savedTripId = tripId; updatedAt = Instant.now(); }
     public String getId() { return id; }
