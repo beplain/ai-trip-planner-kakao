@@ -30,7 +30,7 @@ export function lodgingSearchQuery(destination?: string) {
 }
 
 export function buildLodgingMapHtml(jsKey: string, kind: 'lodging' | 'transport' | 'visit' = 'lodging', initialRegion?: string,
-  initialCenter?: Pick<LodgingPlace, 'latitude' | 'longitude'>) {
+  initialCenter?: Pick<LodgingPlace, 'latitude' | 'longitude'>, transportFocus?: 'airport') {
   const center = initialCenter && Number.isFinite(initialCenter.latitude) && Number.isFinite(initialCenter.longitude)
     ? { latitude: initialCenter.latitude, longitude: initialCenter.longitude, level: 3 }
     : { latitude: 36.5, longitude: 127.8, level: 13 };
@@ -149,6 +149,16 @@ else{kakao.maps.load(function(){
    finish(keywordStatus===kakao.maps.services.Status.OK && hits && hits[0]);
   },{size:1});
  });}
+ if(${JSON.stringify(transportFocus === 'airport')}){
+  places.keywordSearch((regionName||initialRegion)+' 공항',function(data,status){
+   if(finished)return;
+   var airport=status===kakao.maps.services.Status.OK && data && data.find(function(p){
+    return / > 공항$/.test(p.category_name||'') && !/주차|화물|폐쇄|출입구/.test(p.place_name||'');
+   });
+   if(airport){finish(airport);return;}regionCenter();
+  },{size:15});
+  return;
+ }
  if(lodgingOnly || ${JSON.stringify(kind === 'visit')} || !regionName){regionCenter();return;}
  places.keywordSearch(regionName+'역',function(data,status){
   if(finished)return;

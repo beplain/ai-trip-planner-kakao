@@ -10,7 +10,8 @@ export function TransportDeparture({ value, dayNumber, color = C.primary }: {
   const transport = value?.transport;
   if (dayNumber !== 1 || !transport?.originLocation || !transport.originTime) return null;
   const train = transport.mode === 'KTX' ? transport.train : undefined;
-  const boarding = train && transport.arrivalAuto ? transport.boardingStation ?? transport.originLocation : transport.originLocation;
+  const flight = transport.mode === 'PLANE' ? transport.flight : undefined;
+  const boarding = transport.mode === 'PLANE' ? transport.boardingStation ?? transport.originLocation : train && transport.arrivalAuto ? transport.boardingStation ?? transport.originLocation : transport.originLocation;
   const time = train?.departureTime ?? transport.originTime;
   const mode = { KTX: '기차', BUS: '버스·지하철', CAR: '자동차', PLANE: '비행기' }[transport.mode];
   return <View style={s.placeCard}>
@@ -19,11 +20,12 @@ export function TransportDeparture({ value, dayNumber, color = C.primary }: {
       <View style={s.line} />
     </View>
     <ItineraryDisclosure name={boarding.name} summary={<>
-      <Text style={[s.placeTime, { color }]}>{time} · {train ? '열차 출발' : '여행 출발'}</Text>
+      <Text style={[s.placeTime, { color }]}>{time} · {train ? '열차 출발' : transport.mode === 'PLANE' ? '항공편 출발' : '여행 출발'}</Text>
       <FitText fontSize={16} style={s.placeName}>{boarding.name}</FitText>
       <Text style={s.placeAddr}>{boarding.address}</Text>
     </>}>
-      <Text style={s.placeNote}>{train ? `${train.trainType} ${train.trainNo}` : mode} · {transport.arrivalPlace} 방면</Text>
+      <Text style={s.placeNote}>{flight ? `${flight.airline} ${flight.flightNo}` : train ? `${train.trainType} ${train.trainNo}` : mode} · {transport.arrivalPlace} 방면</Text>
+      {transport.mode === 'PLANE' && boarding.placeId !== transport.originLocation.placeId && <Text style={s.placeNote}>출발 장소: {transport.originLocation.name} · 공항까지 이동 시간 별도 확인</Text>}
       {train && boarding.placeId !== transport.originLocation.placeId && <Text style={s.placeNote}>출발 장소: {transport.originLocation.name} · 역까지 이동 시간 별도 확인</Text>}
     </ItineraryDisclosure>
   </View>;

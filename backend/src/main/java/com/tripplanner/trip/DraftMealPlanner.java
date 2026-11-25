@@ -48,6 +48,23 @@ final class DraftMealPlanner {
         return List.copyOf(warm.values());
     }
 
+    static List<PlaceDraft> earlyLookups(GenerateRequest request,List<PlaceDraft> restaurants) {
+        var events=TravelSchedule.events(request.travelDetails(),request.days());
+        var days=new ArrayList<DayDraft>();
+        for(int day=1;day<=request.days();day++) {
+            final int number=day;
+            days.add(new DayDraft(day,request.startDate()==null?null:request.startDate().plusDays(day-1),
+                events.stream().filter(e->e.day()==number).map(TravelSchedule.Event::place).toList()));
+        }
+        var seed=new TripDraft(request.destination(),request.destination(),request.startDate(),null,request.budget(),request.styles(),days,"WARMUP",List.of(),request.request(),request.travelDetails());
+        var warm=new LinkedHashMap<String,PlaceDraft>();
+        for(int variant=0;variant<3;variant++)for(var place:likelyLookups(seed,Map.of(),restaurants,variant)) {
+            warm.putIfAbsent(place.placeId(),place);
+            if(warm.size()>=36)return List.copyOf(warm.values());
+        }
+        return List.copyOf(warm.values());
+    }
+
     static List<PlaceDraft> search(String destination, int days, TravelDetails details, KakaoLocalClient lookups, ExecutorService executor) {
         var area = lookups.resolveArea(destination).orElse(null);
         int searchCount = Math.min(MENUS.size(), 12 + days * 5);
@@ -467,14 +484,15 @@ final class DraftMealPlanner {
         return invalid;
     }
 
-    private static boolean validMealOrder(List<PlaceDraft> visits) {
-        var ordered = visits.stream().sorted(Comparator.comparingInt(DraftMealPlanner::minute)).toList();
-        for (int i = 0; i + 1 < ordered.size(); i++) {
-            if (!restaurant(ordered.get(i))) continue;
-            if (restaurant(ordered.get(i + 1)) || i + 2 < ordered.size()
-                    && "카페".equals(ordered.get(i + 1).category()) && restaurant(ordered.get(i + 2))) return false;
+    static boolean validMealOrder(List<PlaceDraft> visits) { return mealOrderViolations(visits)==0; }
+    static int mealOrderViolations(List<PlaceDraft> visits) {
+        var ordered=visits.stream().sorted(Comparator.comparing(p->Objects.toString(p.visitTime(),"00:00"))).toList();
+        int violations=0;
+        for(int i=0;i+1<ordered.size();i++) {
+            if(!restaurant(ordered.get(i)))continue;
+            if(restaurant(ordered.get(i+1))||i+2<ordered.size()&&"카페".equals(ordered.get(i+1).category())&&restaurant(ordered.get(i+2)))violations++;
         }
-        return true;
+        return violations;
     }
 
     private static boolean free(List<PlaceDraft> visits, int time, int gap) {

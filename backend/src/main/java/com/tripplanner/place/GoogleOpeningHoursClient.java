@@ -43,7 +43,11 @@ public class GoogleOpeningHoursClient {
         private final Map<String,CompletableFuture<GoogleOpeningHours>> inflight=new ConcurrentHashMap<>();
         private final AtomicInteger calls=new AtomicInteger();
         private final AtomicBoolean authFailure=new AtomicBoolean();
-        private final long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(45);
+        private volatile long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(45);
+        private final AtomicBoolean schedulingStarted=new AtomicBoolean();
+        public void beginScheduling() {
+            if(schedulingStarted.compareAndSet(false,true))deadline=Math.max(deadline,System.nanoTime()+TimeUnit.SECONDS.toNanos(45));
+        }
         public void prefetch(Collection<PlaceDraft> places) {
             Map<String,PlaceDraft> unique=new LinkedHashMap<>();for(var p:places)if(p.fixedEventId()==null)unique.putIfAbsent(key(p),p);
             List<Callable<Void>> tasks=new ArrayList<>();for(var p:unique.values())tasks.add(()->{lookup(p);return null;});
@@ -52,7 +56,7 @@ public class GoogleOpeningHoursClient {
             requireReady();
         }
         public void prefetchMealCandidates(List<PlaceDraft> candidates) {
-            if (calls.get() >= maxCalls / 2) return;
+            if (calls.get() >= maxCalls) return;
             // A cached first choice must not hide the remaining uncached candidates behind one-by-one lookups.
             List<PlaceDraft> missing = candidates.stream().filter(p -> !cache.containsKey(key(p))).toList();
             if (!missing.isEmpty()) prefetch(missing);
@@ -72,7 +76,9 @@ public class GoogleOpeningHoursClient {
                 }
             }
             try {
-                GoogleOpeningHours loaded=load(p);
+                // Another worker may have completed between the initial cache read and reservation.
+                GoogleOpeningHours loaded=cache.get(id);
+                if(loaded==null)loaded=load(p);
                 cache.put(id,loaded);
                 created.complete(loaded);
                 return loaded;

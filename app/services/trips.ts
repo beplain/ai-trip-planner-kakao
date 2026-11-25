@@ -12,7 +12,7 @@ export type Stay = {
 export type SelectedPlace = { placeId: string; name: string; address: string; latitude: number; longitude: number; placeUrl: string; category?: string; categoryPath?: string };
 export type TrainOption = { id: string; date: string; trainNo: string; trainType: string; originStation: string; arrivalStation: string; departureTime: string; arrivalTime: string };
 export type FlightOption = { id: string; date: string; airline: string; flightNo: string; originAirportId: string; arrivalAirportId: string; originAirport: string; arrivalAirport: string; departureTime: string; arrivalTime: string };
-export type Airport = { id: string; name: string };
+export type Airport = { id: string; name: string; location?: SelectedPlace };
 export type TravelDetails = {
   movementMode: 'CAR' | 'PUBLIC_TRANSIT' | 'WALK'; stays: Stay[];
   transport?: { flight?: FlightOption; returnFlight?: FlightOption; alightingStation?: SelectedPlace; returnAlightingStation?: SelectedPlace; boardingStation?: SelectedPlace; returnBoardingStation?: SelectedPlace; returnArrivalAuto?: boolean; returnArrivalTime?: string; returnArrivalLocation?: SelectedPlace; returnTrain?: TrainOption; train?: TrainOption; originLocation?: SelectedPlace; originTime?: string; arrivalAuto?: boolean; arrivalLocation?: SelectedPlace; departureLocation?: SelectedPlace; mode: 'KTX' | 'PLANE' | 'BUS' | 'CAR'; arrivalPlace: string; arrivalTime: string; departurePlace: string; departureTime: string };
@@ -162,6 +162,9 @@ export const tripsApi = {
   },
   async airports() { return (await api.get<Airport[]>('/api/trips/transport/airports', { timeout: 20000 })).data; },
   async airportLocation(id: string) { return (await api.get<SelectedPlace>(`/api/trips/transport/airports/${encodeURIComponent(id)}/location`, { timeout: 20000 })).data; },
+  async airportCandidates(origin: SelectedPlace) { return (await api.post<Airport[]>('/api/trips/transport/airport-candidates', { origin }, { timeout: 45000 })).data; },
+  async stationCatalog() { return (await api.get<string[]>('/api/trips/transport/stations')).data; },
+  async stationLocation(name: string) { return (await api.get<SelectedPlace>(`/api/trips/transport/stations/${encodeURIComponent(name)}/location`)).data; },
   async flightOptions(date: string, originAirportId: string, arrivalAirportId: string) {
     return (await api.post<FlightOption[]>('/api/trips/transport/flights', { date, originAirportId, arrivalAirportId }, { timeout: 90000 })).data;
   },

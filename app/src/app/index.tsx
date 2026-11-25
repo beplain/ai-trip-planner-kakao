@@ -157,8 +157,8 @@ function MeTab() {
           accessibilityRole="button" disabled={loggingOut}
           style={[s.outlineButton, { marginTop: 28 }]}
           onPress={() => alert('로그아웃', '로그아웃할까요?', [
-            { text: '취소', style: 'cancel' },
             { text: '로그아웃', style: 'destructive', onPress: () => { setLoggingOut(true);void logout().then(()=>router.replace('/')).catch(e=>alert('로그아웃하지 못했어요',apiError(e))).finally(()=>setLoggingOut(false)); } },
+            { text: '취소', style: 'cancel' },
           ])}>
           <Text style={s.outlineText}>로그아웃</Text>
         </Pressable>

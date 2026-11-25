@@ -192,4 +192,21 @@ class GoogleOpeningHoursClientTests {
         }
     }
 
+
+    @Test void mealPrefetchStillRunsAfterHalfTheBudgetWithoutSkippingHoursValidation() {
+        var b=RestClient.builder();var server=MockRestServiceServer.bindTo(b).build();
+        server.expect(org.springframework.test.web.client.ExpectedCount.times(3),anything())
+            .andRespond(withSuccess(response("영남돼지"),MediaType.APPLICATION_JSON));
+        var client=new GoogleOpeningHoursClient(b.build(),"secret",4,Clock.systemUTC());
+        try {
+            var session=client.session();var original=place("영남돼지");
+            var two=new PlaceDraft("two",original.name(),original.address(),original.latitude(),original.longitude(),"12:00",null,null,"식당",true,null,null);
+            var three=new PlaceDraft("three",original.name(),original.address(),original.latitude(),original.longitude(),"12:00",null,null,"식당",true,null,null);
+            session.lookup(original);session.lookup(two);assertEquals(2,session.calls());
+            session.prefetchMealCandidates(java.util.List.of(three));assertEquals(3,session.calls());
+            assertEquals(GoogleOpeningHours.State.CLOSED,session.lookup(three).assess(LocalDate.of(2026,11,23),"12:00",60).state());
+            assertEquals(3,session.calls(),"The scheduler must reuse the parallel result");server.verify();
+        }finally{client.close();}
+    }
+
 }

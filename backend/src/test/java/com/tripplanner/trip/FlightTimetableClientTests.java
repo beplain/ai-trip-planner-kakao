@@ -70,14 +70,29 @@ class FlightTimetableClientTests {
         when(flights.options(new FlightLookupRequest(DATE,"GMP","CJU"))).thenReturn(List.of(out));
         when(flights.options(new FlightLookupRequest(DATE,"CJU","GMP"))).thenReturn(List.of(back));
         when(flights.location("GMP")).thenReturn(gmp); when(flights.location("CJU")).thenReturn(cju);
-        var t=new Transport(TransportMode.PLANE,cju.name(),"09:00",cju.name(),"19:00",cju,cju,gmp,"08:00",true,null,gmp,null,"22:00",true,null,null,null,null,out,back);
+        var home=place("3","출발 장소"); var hotel=place("4","제주 숙소");
+        var t=new Transport(TransportMode.PLANE,cju.name(),"09:00",hotel.name(),"19:00",cju,hotel,home,"08:00",true,null,gmp,null,"22:00",true,gmp,cju,null,null,out,back);
         var request=new GenerateRequest("제주",DATE,1,null,List.of("맛집"),null,new TravelDetails(MovementMode.CAR,List.of(),t));
         var resolved=new TransportArrivalService(null,null,flights).resolve(request).travelDetails();
         assertEquals("08:20",resolved.transport().arrivalTime()); assertEquals("20:00",resolved.transport().departureTime());
         assertEquals(560,TravelSchedule.start(1,resolved)); assertEquals(1080,TravelSchedule.end(1,1,resolved));
         assertEquals(1080,TravelSchedule.events(resolved,1).stream().filter(e->e.id().equals("transport:boarding")).findFirst().orElseThrow().minute());
+        assertEquals(cju,TravelSchedule.events(resolved,1).stream().filter(e->e.id().equals("transport:boarding")).findFirst().orElseThrow().selectedPlace());
+        assertTrue(TravelSchedule.prompt(resolved,1).contains("김포국제공항"));
         var converter=new TravelDetailsConverter(); assertEquals(resolved,converter.convertToEntityAttribute(converter.convertToDatabaseColumn(resolved)));
         assertEquals(out,resolved.transport().withStations(null,null).withAlightingStations(null,null).flight());
+    }
+    @Test void recommendsTwoClosestVerifiedAirportsAndPreservesTheirIdentity() {
+        var builder=RestClient.builder(); MockRestServiceServer.bindTo(builder).build();
+        var client=spy(new FlightTimetableClient("key","map",builder.build()));
+        var origin=new SelectedPlace("1","출발지","서울",37.5,127.0,null);
+        var near=new SelectedPlace("2","김포국제공항","서울",37.55,126.8,null);
+        var second=new SelectedPlace("3","인천국제공항","인천",37.45,126.45,null);
+        var far=new SelectedPlace("4","제주국제공항","제주",33.5,126.5,null);
+        doReturn(List.of(new Airport("CJU",far.name(),null),new Airport("ICN",second.name(),null),new Airport("GMP",near.name(),null))).when(client).airports();
+        doReturn(near).when(client).location("GMP"); doReturn(second).when(client).location("ICN"); doReturn(far).when(client).location("CJU");
+        try { var result=client.nearby(origin); assertEquals(List.of("GMP","ICN"),result.stream().map(Airport::id).toList()); assertEquals(near,result.get(0).location()); }
+        finally { client.close(); }
     }
     @Test void rejectsStaleDateAndAllowsManualFlightsWithoutApi() {
         var gmp=place("1","김포국제공항"); var cju=place("2","제주국제공항");

@@ -14,6 +14,19 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
 class TrainStationRecommendationTests {
+    @Test void fullCatalogIsUniqueAndManualChoiceResolvesActualRailStation() {
+        var builder=RestClient.builder(); var server=MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(org.hamcrest.Matchers.containsString("keyword.json"))).andRespond(withSuccess("""
+          {"documents":[{"id":"10","place_name":"김천(구미)역 경부고속선","address_name":"경상북도 김천시","x":"128.18","y":"36.11","category_name":"교통,수송 > 기차,철도 > KTX정차역 > 고속철도선"}]}
+          """,MediaType.APPLICATION_JSON));
+        var service=new TrainStationRecommendationService(null,"map",builder.build());
+        assertEquals(88,service.stationCatalog().size()); assertEquals(88,new HashSet<>(service.stationCatalog()).size());
+        assertTrue(service.stationCatalog().containsAll(List.of("구례구","부전","수서","충주","판교(경기)")));
+        assertEquals("진부",TrainStationRecommendationService.catalogKey("진부(오대산)역 경강선"));
+        assertEquals("판교",TrainStationRecommendationService.catalogKey("판교(경기)"));
+        var station=service.catalogLocation("김천구미"); assertEquals("10",station.placeId()); assertEquals(station,service.catalogLocation("김천구미"));
+        assertThrows(ApiException.class,()->service.catalogLocation("없는역")); server.verify();
+    }
     static final LocalDate DATE=LocalDate.of(2027,5,1);
     static SelectedPlace place(String id,String name,double x) { return new SelectedPlace(id,name,"서울특별시 종로구",37.,x,null); }
     static final SelectedPlace ORIGIN=place("1","광화문",127.),A=place("2","서울역",127.01),B=place("3","용산역",127.02),DEST=place("4","부산역",129.);

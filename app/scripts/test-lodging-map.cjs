@@ -152,3 +152,25 @@ assert.equal(context.map.getCenter().getLng(), 129.041);
 assert.equal(context.map.getLevel(), 3);
 assert.equal(geocodes.length, geocodesBeforeReturn);
 assert.equal(messages.at(-1).type, 'ready');
+// Airport maps must never run the representative station/bus-terminal search.
+function openAirport(region, center) {
+ const html=buildLodgingMapHtml('public-key','transport',region,center,'airport');
+ for(const script of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g))if(script[1].trim())vm.runInContext(script[1],context);
+}
+openAirport('제주특별자치도 제주시');
+assert.equal(searches.at(-1).query,'제주 공항');
+const airportSearch=searches.at(-1);
+airportSearch.callback([
+ {...hotel,place_name:'제주버스터미널',category_name:'교통 > 버스터미널',x:'126.52',y:'33.49'},
+ {...hotel,place_name:'제주국제공항 주차장',category_name:'교통 > 주차장',x:'126.49',y:'33.50'},
+ {...hotel,place_name:'제주국제공항',category_name:'교통 > 항공 > 공항',x:'126.493',y:'33.510'}
+],'OK');
+assert.equal(context.map.getCenter().getLat(),33.510);assert.equal(context.map.getCenter().getLng(),126.493);assert.equal(context.map.getLevel(),3);
+const searchCount=searches.length;
+openAirport('제주특별자치도 제주시',{latitude:33.510,longitude:126.493});
+assert.equal(searches.length,searchCount,'A selected airport keeps its own center without a terminal lookup');
+assert.equal(context.map.getLevel(),3);
+openAirport('경상북도 청송군');searches.at(-1).callback([],'ZERO_RESULT');
+assert.equal(geocodes.at(-1).query,'경상북도 청송군');assert(!searches.at(-1).query.includes('터미널'));
+geocodes.at(-1).callback([{x:'129',y:'36'}],'OK');assert.equal(context.map.getLevel(),8);
+console.log('Airport maps passed: airport-first zoom, selected airport center and regional fallback without bus terminals.');

@@ -229,7 +229,7 @@ function DraftScreen() {
       <UndoNotice notice={undoNotice} onDismiss={() => setUndoNotice(null)} />
       <ScreenHeader title="일정 초안 검토" onBack={() => router.replace('/')} />
       {!draft ? <View style={s.center}>{error ? <Text style={s.warnText}>{error}</Text> : <ActivityIndicator size="large" color={C.primary} />}</View> : (
-        <ScrollView ref={attach} scrollEnabled={!dragging} onScroll={onScroll} scrollEventThrottle={16} onContentSizeChange={onContentSizeChange} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+        <ScrollView ref={attach} scrollEnabled={!dragging} onScroll={onScroll} scrollEventThrottle={16} onContentSizeChange={onContentSizeChange} contentContainerStyle={[s.content, { paddingBottom: 110 }]} keyboardShouldPersistTaps="handled">
           <View style={s.detailHero}>
             <Text style={s.eyebrowLight}>{[draft.destination, `${draft.days.length}일`, dateRange(draft.startDate, draft.endDate), formatBudget(draft.budget)].filter(Boolean).join(' · ')}</Text>
             <Text style={s.detailTitle}>{draft.title}</Text>
@@ -286,6 +286,10 @@ function DraftScreen() {
           {room?.myRole !== 'VIEWER' && <Pressable accessibilityRole="button" disabled={busy || syncing || dragging || editor.blocked} style={[s.primary, (busy || syncing || dragging || editor.blocked) && s.disabled]} onPress={() => { void save(); }}><Text style={s.primaryText}>{busy ? '반영 중…' : '이 일정 확정하기'}</Text></Pressable>}
         </ScrollView>
       )}
+      {!!draft && <Pressable accessibilityRole="button" accessibilityLabel="초안 새로고침" disabled={busy || syncing || dragging || !!memo || switchingOption}
+        onPress={() => { void syncNow(); }} style={{ position: 'absolute', right: 20, bottom: 24, width: 52, height: 52, borderRadius: 26, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', zIndex: 20, elevation: 5, boxShadow: '0 3px 10px rgba(0,0,0,0.2)', opacity: busy || syncing || dragging || !!memo || switchingOption ? 0.5 : 1 }}>
+        {syncing ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontSize: 30 }}>↻</Text>}
+      </Pressable>}
       <MemoModal visible={!!memoPlace} title={memoPlace?.name ?? ''} initialTime={memoPlace?.visitTime} initialNote={memoPlace?.note}
         disabled={busy||editor.blocked} notice={editor.message||error}
         onCancel={() => {if(lock.current)return;setMemo(null);memoOpen.current=false;endEdit();}} onSave={(visitTime,note) => {

@@ -24,6 +24,9 @@ public class FlightTimetableClient {
     private volatile List<Airport> airports=List.of();
     private volatile long airportsUntil;
     private final Map<String,SelectedPlace> locations=new ConcurrentHashMap<>();
+    private final java.util.concurrent.ExecutorService airportSearch=java.util.concurrent.Executors.newFixedThreadPool(5);
+    private final Map<String,Long> locationFailures=new ConcurrentHashMap<>();
+    @jakarta.annotation.PreDestroy public void close() { airportSearch.shutdownNow(); }
     @org.springframework.beans.factory.annotation.Autowired
     public FlightTimetableClient(@Value("${app.train.service-key:}") String key,@Value("${app.routing.kakao-map-key:}") String mapKey) {
         this(key,mapKey,client());
@@ -49,6 +52,7 @@ public class FlightTimetableClient {
     public SelectedPlace location(String id) {
         Airport airport=airport(id);
         if(locations.containsKey(id)) return locations.get(id);
+        if(locationFailures.getOrDefault(id,0L)>System.currentTimeMillis()) throw unavailable();
         if(mapKey==null || mapKey.isBlank()) throw unavailable();
         try {
             var uri=UriComponentsBuilder.fromUriString("https://dapi.kakao.com/v2/local/search/keyword.json").queryParam("query",airport.name()).queryParam("size",15).build().encode().toUri();
@@ -58,14 +62,26 @@ public class FlightTimetableClient {
             candidates.sort(Comparator.comparingInt(r->r.path("place_name").asText().contains("국내선")?0:1));
             for(var row:candidates) {
                 String name=row.path("place_name").asText();
-                if(!(name.equals(airport.name()) || name.equals(airport.name()+" 국내선") || name.equals(airport.name()+" 국내선청사"))
+                String official=airport.name().replace("포항공항","포항경주공항");
+                if(!(name.equals(official) || name.equals(official+" 국내선") || name.equals(official+" 국내선청사"))
                     || !row.path("category_name").asText().endsWith(" > 공항")) continue;
                 var place=new SelectedPlace(row.path("id").asText(),airport.name(),row.path("address_name").asText(),Double.valueOf(row.path("y").asText()),Double.valueOf(row.path("x").asText()),null);
                 if(!place.validId() || !Double.isFinite(place.latitude()) || !Double.isFinite(place.longitude())) continue;
                 locations.put(id,place); return place;
             }
         } catch(RuntimeException ignored) { /* No upstream URL or key in user-visible errors. */ }
+        locationFailures.put(id,System.currentTimeMillis()+300_000);
         throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,"AIRPORT_LOCATION_UNAVAILABLE","공항의 지도 위치를 확인하지 못했어요. 잠시 후 공항을 다시 선택해 주세요.");
+    }
+    public List<Airport> nearby(SelectedPlace origin) {
+        if(origin==null || origin.latitude()==null || origin.longitude()==null || !Double.isFinite(origin.latitude()) || !Double.isFinite(origin.longitude()) || Math.abs(origin.latitude())>90 || Math.abs(origin.longitude())>180)
+            throw ApiException.badRequest("지도에서 출발 장소를 선택해 주세요.");
+        var tasks=airports().stream().map(a->java.util.concurrent.CompletableFuture.supplyAsync(()->{
+            try { return new Airport(a.id(),a.name(),location(a.id())); } catch(RuntimeException ignored) { return null; }
+        },airportSearch)).toList();
+        var result=tasks.stream().map(java.util.concurrent.CompletableFuture::join).filter(Objects::nonNull)
+            .sorted(Comparator.comparingDouble(a->com.tripplanner.place.Geo.distanceMeters(origin.latitude(),origin.longitude(),a.location().latitude(),a.location().longitude()))).limit(2).toList();
+        if(result.isEmpty()) throw unavailable(); return result;
     }
     public List<FlightOption> options(FlightLookupRequest q) {
         if(q.date()==null || q.originAirportId()==null || q.arrivalAirportId()==null) throw ApiException.badRequest("날짜와 출발·도착 공항을 선택해 주세요.");

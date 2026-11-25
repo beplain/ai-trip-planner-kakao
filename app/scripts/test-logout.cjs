@@ -15,7 +15,7 @@ function reset(){states=[];calls=[];notice=null;failing=false;}
 function press(){const tree=render();assert.ok(nodes(tree).some(n=>n.props?.children?.includes?.('Dialog')));nodes(tree).find(n=>n.type==='Pressable'&&nodes(n).some(c=>c.props?.children==='로그아웃')).props.onPress();}
 async function settle(){for(let i=0;i<16;i++)await Promise.resolve();}
 (async()=>{
- reset();press();assert.equal(notice.title,'로그아웃');assert.equal(calls.length,0);notice.buttons.find(b=>b.text==='취소').onPress?.();assert.equal(calls.length,0);
+ reset();press();assert.equal(notice.title,'로그아웃');assert.equal(notice.buttons.map(b=>b.text).join(','),'로그아웃,취소');assert.equal(calls.length,0);notice.buttons.find(b=>b.text==='취소').onPress?.();assert.equal(calls.length,0);
  reset();press();notice.buttons.find(b=>b.text==='로그아웃').onPress();await settle();assert.deepEqual(calls,[['logout'],['navigate','/']]);
  reset();failing=true;press();notice.buttons.find(b=>b.text==='로그아웃').onPress();await settle();assert.equal(notice.title,'로그아웃하지 못했어요');assert.equal(calls.length,1);
  console.log('Logout passed: visible web confirmation, cancellation, session clearing navigation and visible retryable failures.');

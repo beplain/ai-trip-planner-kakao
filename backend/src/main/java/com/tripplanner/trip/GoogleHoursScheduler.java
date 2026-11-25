@@ -18,6 +18,7 @@ public class GoogleHoursScheduler {
     public class Session {
         private final GoogleOpeningHoursClient.Session lookups;
         Session(GoogleOpeningHoursClient.Session lookups){this.lookups=lookups;}
+        public void beginScheduling(){lookups.beginScheduling();}
         public void prefetch(List<TripDraft> drafts){
             if(drafts.stream().anyMatch(d->d.days().stream().anyMatch(day->date(d,day)==null)))throw ApiException.badRequest("운영시간을 반영하려면 여행 날짜를 선택해 주세요.");
             lookups.prefetch(drafts.stream().flatMap(d->d.days().stream()).flatMap(d->d.places().stream()).toList());}

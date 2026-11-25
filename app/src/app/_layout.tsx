@@ -5,7 +5,7 @@ import { Platform, useColorScheme, useWindowDimensions, View } from 'react-nativ
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { AnimatedSplashOverlay } from '@/components/app-splash';
 import { AuthProvider } from '@/lib/auth-context';
 import { WEB_APP_WIDTH } from '@/lib/app-layout';
 

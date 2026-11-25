@@ -64,7 +64,7 @@ public class TrainTimetableClient {
     }
     private String station(SelectedPlace selected) {
         if(selected==null || selected.name()==null || selected.address()==null) throw ApiException.badRequest("카카오맵에서 출발 기차역과 도착 기차역을 선택해 주세요.");
-        String first=selected.name().trim().split("\\s+")[0].replaceAll("[()]","");
+        String first=selected.name().trim().split("\\s+")[0];
         if(!first.endsWith("역")) throw ApiException.badRequest("'"+selected.name()+"'은(는) 기차역 이름으로 확인하기 어려워요. 역 건물을 다시 선택해 주세요.");
         String name=first.substring(0,first.length()-1);
         String city=cityKey(selected.address());
@@ -78,7 +78,7 @@ public class TrainTimetableClient {
         if(matches.size()!=1) throw ApiException.badRequest("'"+selected.name()+"'에 대응하는 기차역을 하나로 확인하지 못했어요. 지하철역·출구 대신 기차역을 선택하거나 승차권 시각을 직접 선택해 주세요.");
         return matches.get(0);
     }
-    private static String stationKey(String name) { return name.replaceAll("[()\\s]","").replaceAll("역$",""); }
+    private static String stationKey(String name) { return name.replace("김천(구미)","김천구미").replaceAll("\\([^)]*\\)","").replaceAll("\\s","").replaceAll("역$",""); }
     private static String placeStation(SelectedPlace p) { return stationKey(p.name().trim().split("\\s+")[0]); }
     private static String cityKey(String text) {
         String first=text.trim().split("\\s+")[0];

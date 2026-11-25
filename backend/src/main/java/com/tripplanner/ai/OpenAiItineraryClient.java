@@ -23,7 +23,7 @@ import java.util.*;
 @Component
 public class OpenAiItineraryClient {
     private static final Logger log = LoggerFactory.getLogger(OpenAiItineraryClient.class);
-    // TripGenerationService owns the two-attempt budget; do not multiply it with nested retries.
+    // Use one itinerary request; TripGenerationService repairs locally instead of requesting the AI again.
     private static final int MAX_ATTEMPTS = 1;
     private static final List<String> CATEGORIES = List.of("관광", "식당", "카페", "쇼핑", "자연", "문화", "체험", "기타");
 

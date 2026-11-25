@@ -8,7 +8,7 @@ import java.util.*;
 /** Fixed user commitments are built by the server, never invented by the language model. */
 public final class TravelSchedule {
     static String returnDeparture(Transport t) { return t.mode()==TransportMode.KTX && !Boolean.FALSE.equals(t.returnArrivalAuto()) && t.returnTrain()!=null ? t.returnTrain().departureTime() : t.departureTime(); }
-    static SelectedPlace returnStation(Transport t) { return t.mode()==TransportMode.KTX && !Boolean.FALSE.equals(t.returnArrivalAuto()) && t.returnTrain()!=null && t.returnBoardingStation()!=null?t.returnBoardingStation():t.departureLocation(); }
+    static SelectedPlace returnStation(Transport t) { return t.mode()==TransportMode.PLANE && t.returnBoardingStation()!=null?t.returnBoardingStation():t.mode()==TransportMode.KTX && !Boolean.FALSE.equals(t.returnArrivalAuto()) && t.returnTrain()!=null && t.returnBoardingStation()!=null?t.returnBoardingStation():t.departureLocation(); }
     private TravelSchedule() {}
     public record Event(int day, String id, String name, String location, int minute, String note, SelectedPlace selectedPlace) {
         public Event(int day, String id, String name, String location, int minute, String note) {
@@ -196,7 +196,7 @@ public final class TravelSchedule {
                 .append(stay.beforeCheckIn()).append(" / 퇴실 후 짐: ").append(stay.afterCheckOut()).append('\n');
         if (d.transport() != null && d.transport().originLocation() != null) {
             var t = d.transport();
-            s.append("가는 편: ").append(t.mode()==TransportMode.KTX && t.train()!=null && t.boardingStation()!=null?t.boardingStation().name():t.originLocation().name()).append(" ").append(t.train()==null?t.originTime():t.train().departureTime()).append(" 출발 → ")
+            s.append("가는 편: ").append(((t.mode()==TransportMode.KTX && t.train()!=null) || t.mode()==TransportMode.PLANE) && t.boardingStation()!=null?t.boardingStation().name():t.originLocation().name()).append(" ").append(t.train()==null?t.originTime():t.train().departureTime()).append(" 출발 → ")
                     .append(t.mode()==TransportMode.KTX && t.train()!=null && t.alightingStation()!=null?t.alightingStation().name():t.arrivalPlace()).append(" ").append(t.arrivalTime()).append(" 도착 / 교통: ").append(t.mode())
                     .append(t.flight()!=null ? " / 항공 시간표: "+t.flight().airline()+" "+t.flight().flightNo() : t.train()!=null ? " / 열차 시간표: "+t.train().trainType()+" "+t.train().trainNo() : t.arrivalAuto() ? " / 경로 조회 소요 시간으로 계산한 예상 도착 시각" : " / 사용자가 확인한 도착 시각").append('\n');
         }

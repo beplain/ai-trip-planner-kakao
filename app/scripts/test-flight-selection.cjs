@@ -35,4 +35,13 @@ assert.ok(ui.travelDetailsError(details({ ...manual, returnArrivalTime: '19:00' 
 assert.ok(ui.travelDetailsError(details({ ...manual, arrivalTime: '06:00' }), 3, out.date).includes('늦어야'));
 assert.ok(ui.travelDetailsError(details({ ...manual, arrivalLocation: gmp }), 3, out.date).includes('다르게'));
 assert.equal(trains.patchTransport(t, helpers.selectFlight(out, false)).returnFlight.id, 'back');
+assert.equal(helpers.validFlightSelection({ ...t, originLocation: {placeId:'home',name:'우리 집'},boardingStation:gmp }, out.date), true);
+assert.equal(helpers.validFlightSelection({ ...t, departureLocation: {placeId:'hotel',name:'숙소'},returnBoardingStation:cju }, back.date, true), true);
+const trainInput={mode:'KTX',arrivalPlace:'',departurePlace:'',originTime:'08:00',departureTime:'20:00',arrivalTime:'10:00'};
+let mirrored=trains.patchTransport(trainInput,{originLocation:gmp});
+mirrored=trains.patchTransport(mirrored,{arrivalLocation:cju,arrivalPlace:cju.name});
+assert.equal(mirrored.returnArrivalLocation.placeId,gmp.placeId);assert.equal(mirrored.departureLocation.placeId,cju.placeId);assert.equal(mirrored.departurePlace,cju.name);
+mirrored=trains.patchTransport(mirrored,{alightingStation:cju,boardingStation:gmp});
+assert.equal(mirrored.returnBoardingStation.placeId,cju.placeId);assert.equal(mirrored.returnAlightingStation.placeId,gmp.placeId);
+assert.equal(trains.patchTransport({...mirrored,returnArrivalLocation:{placeId:'other'}},{originLocation:{...gmp,placeId:'new'}}).returnArrivalLocation.placeId,'other','Explicit return overrides survive outbound edits');
 console.log('Flight selection checks passed: both legs, changed dates/airports/times, manual fallback, and invalid times.');

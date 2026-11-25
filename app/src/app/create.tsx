@@ -134,7 +134,7 @@ function CreateScreen() {
 
   return (
     <SafeAreaView style={s.safe}>
-      <ScreenHeader title="새 여행 만들기" onBack={stepIndex > 0 ? previousStep : undefined} />
+      <ScreenHeader title="새 여행 만들기" onBack={stepIndex > 0 ? previousStep : undefined} right={<Pressable accessibilityRole="button" accessibilityLabel="홈 화면으로 이동" style={s.smallButton} onPress={() => { Keyboard.dismiss(); router.replace('/'); }}><Text style={s.smallButtonText}>홈</Text></Pressable>} />
       <ScrollView key={step.id} style={{ flex: 1 }} contentContainerStyle={[s.content, { flexGrow: 1 }]} keyboardShouldPersistTaps="handled">
         <Text style={s.eyebrow}>{stepIndex + 1} / {STEPS.length}</Text>
         <View style={{ flexDirection: 'row', gap: 4, marginBottom: 28 }} aria-hidden>

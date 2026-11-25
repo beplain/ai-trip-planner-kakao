@@ -33,7 +33,7 @@ export function travelDetailsError(value: TravelDetails | undefined, days: numbe
     const t = value.transport;
     if (t.mode === 'PLANE') {
       if (!t.originLocation || !t.arrivalLocation || !t.departureLocation || !t.returnArrivalLocation) return '가는 편과 오는 편의 출발·도착 공항을 모두 선택해 주세요.';
-      if (t.originLocation.placeId === t.arrivalLocation.placeId || t.departureLocation.placeId === t.returnArrivalLocation.placeId) return '출발·도착 공항을 다르게 선택해 주세요.';
+      if ((t.boardingStation ?? t.originLocation).placeId === t.arrivalLocation.placeId || (t.returnBoardingStation ?? t.departureLocation).placeId === t.returnArrivalLocation.placeId) return '출발·도착 공항을 다르게 선택해 주세요.';
       if (t.arrivalAuto && !validFlightSelection(t, startDate)) return '가는 편 항공편을 조회해 선택해 주세요.';
       if (t.returnArrivalAuto !== false && !validFlightSelection(t, startDate ? tripEndDate(startDate, days) : '', true)) return '오는 편 항공편을 조회해 선택해 주세요.';
     }
@@ -228,9 +228,9 @@ export function TravelDetailsInput({ value, onChange, startDate, days, destinati
           ...(mode === 'PLANE' || details.transport?.mode === 'PLANE' ? { originLocation: undefined, arrivalLocation: undefined, departureLocation: undefined, returnArrivalLocation: undefined, arrivalPlace: '', departurePlace: '', train: undefined, returnTrain: undefined, flight: undefined, returnFlight: undefined } : {}),
           mode, arrivalAuto: true, returnArrivalAuto: true,
           originTime: details.transport?.originTime || (mode === 'KTX' ? '' : '08:00'),
-          departureTime: mode === 'CAR' ? '20:00' : details.transport?.departureTime || (mode === 'KTX' ? '' : '18:00'),
+          departureTime: mode === 'CAR' || mode === 'PLANE' ? '20:00' : details.transport?.departureTime || (mode === 'KTX' ? '' : '18:00'),
         })} />
-      {details.transport.mode === 'PLANE' ? <FlightTransportInput transport={details.transport} startDate={startDate} returnDate={returnDate} onChange={changeTransport} /> : <>
+      {details.transport.mode === 'PLANE' ? <FlightTransportInput destination={destination} transport={details.transport} startDate={startDate} returnDate={returnDate} onChange={changeTransport} /> : <>
       <Text style={s.sectionTitleSmall}>가는 편 · 첫날</Text>
       <View style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-end' }}>
         <View style={{ flex: 2, minWidth: 0, gap: 6 }}><Text style={s.mutedSmall}>출발 장소</Text>
@@ -327,8 +327,8 @@ export function TravelDetailsInput({ value, onChange, startDate, days, destinati
 export function TravelDetailsSummary({ value, compact = false }: { value?: TravelDetails; compact?: boolean }) {
   if (!value) return null;
   const t = value.transport;
-  const boarding = t?.mode === 'KTX' && t.train && t.arrivalAuto ? t.boardingStation ?? t.originLocation : t?.originLocation;
-  const returnBoarding = t?.mode === 'KTX' && t.returnTrain && t.returnArrivalAuto !== false ? t.returnBoardingStation ?? t.departureLocation : t?.departureLocation;
+  const boarding = t?.mode === 'PLANE' ? t.boardingStation ?? t.originLocation : t?.mode === 'KTX' && t.train && t.arrivalAuto ? t.boardingStation ?? t.originLocation : t?.originLocation;
+  const returnBoarding = t?.mode === 'PLANE' ? t.returnBoardingStation ?? t.departureLocation : t?.mode === 'KTX' && t.returnTrain && t.returnArrivalAuto !== false ? t.returnBoardingStation ?? t.departureLocation : t?.departureLocation;
   if(compact)return <View style={s.memberBox}>
     <Text style={s.sectionTitleSmall}>숙소·교통</Text>
     <Text style={s.memberNames}>{value.movementMode==='CAR'?'자동차':value.movementMode==='WALK'?'도보':'대중교통'} 이동</Text>

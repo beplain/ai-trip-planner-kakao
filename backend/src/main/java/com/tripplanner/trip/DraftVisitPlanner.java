@@ -13,9 +13,53 @@ final class DraftVisitPlanner {
     private static final int[] MAX = {4, 2, 5};
     private static final int[] TARGET = {3, 2, 5};
     private DraftVisitPlanner() {}
+    private static final ThreadLocal<IdentityHashMap<TripDraft,Boolean>> MEAL_CHECKS=new ThreadLocal<>();
+    private static <T> T cachedMealChecks(java.util.function.Supplier<T> task) {
+        if(MEAL_CHECKS.get()!=null)return task.get();
+        MEAL_CHECKS.set(new IdentityHashMap<>());
+        try{return task.get();}finally{MEAL_CHECKS.remove();}
+    }
+    private static boolean validMeals(TripDraft draft,boolean checkCafes) {
+        var cache=MEAL_CHECKS.get();
+        // The cafe policy is checked separately in safe; cache only the stricter complete meal check.
+        if(cache!=null&&checkCafes&&cache.containsKey(draft))return cache.get(draft);
+        boolean valid;
+        try{DraftMealPlanner.require(draft,checkCafes);valid=true;}catch(IllegalArgumentException | ApiException failure){valid=false;}
+        if(cache!=null&&checkCafes){if(cache.size()>4096)cache.clear();cache.put(draft,valid);}
+        return valid;
+    }
 
     static boolean counted(PlaceDraft place) {
         return place.fixedEventId() == null && !"식당".equals(place.category());
+    }
+
+    /** Remove only redundant visits after hours verification; never relax the profile or add an unchecked venue. */
+    static TripDraft trimExcess(TripDraft draft,int profile) {
+        return trimExcess(draft,profile,(day,p)->true,(a,b)->visitGap(draft));
+    }
+    private static int visitGap(TripDraft draft){return Math.max(0,TravelSchedule.gap(draft.travelDetails())-10);}
+    static TripDraft trimExcess(TripDraft draft,int profile,BiPredicate<DayDraft,PlaceDraft> open,java.util.function.ToIntBiFunction<PlaceDraft,PlaceDraft> travel) {
+        return cachedMealChecks(()->trimExcessInternal(draft,profile,open,travel));
+    }
+    private static TripDraft trimExcessInternal(TripDraft draft,int profile,BiPredicate<DayDraft,PlaceDraft> open,java.util.function.ToIntBiFunction<PlaceDraft,PlaceDraft> travel) {
+        TripDraft result=draft;
+        for(var original:draft.days()) {
+            var day=result.days().get(original.dayNumber()-1);
+            var optional=new ArrayList<>(day.places().stream().filter(DraftVisitPlanner::counted).toList());
+            Collections.reverse(optional);
+            for(var place:optional) {
+                if(day.places().stream().filter(DraftVisitPlanner::counted).count()<=MAX[profile])break;
+                var visits=new ArrayList<>(day.places());visits.remove(place);
+                var trial=replace(result,day,visits);
+                if(safe(result,trial)){result=trial;day=result.days().get(original.dayNumber()-1);}
+                else if(profile==1) {
+                    var relocated=relocate(result,day,place,open,travel);
+                    if(relocated==null)relocated=repackRelocation(result,day,place,open,travel);
+                    if(relocated!=null){result=relocated;day=result.days().get(original.dayNumber()-1);}
+                }
+            }
+        }
+        return result;
     }
 
     static void require(TripDraft draft, int profile) {
@@ -46,14 +90,19 @@ final class DraftVisitPlanner {
 
     static TripDraft fit(TripDraft draft, Map<Integer, List<PlaceDraft>> pool, int profile,
                          BiPredicate<DayDraft, PlaceDraft> open, java.util.function.ToIntBiFunction<PlaceDraft, PlaceDraft> travel) {
-        return fit(draft, pool, profile, open, travel, true);
+        return cachedMealChecks(()->fit(draft, pool, profile, open, travel, true));
     }
 
     private static TripDraft fit(TripDraft draft, Map<Integer, List<PlaceDraft>> pool, int profile,
                          BiPredicate<DayDraft, PlaceDraft> open, java.util.function.ToIntBiFunction<PlaceDraft, PlaceDraft> travel,
                          boolean allowReplacement) {
+        return fit(draft,pool,profile,open,travel,allowReplacement,0);
+    }
+    private static TripDraft fit(TripDraft draft,Map<Integer,List<PlaceDraft>> pool,int profile,
+            BiPredicate<DayDraft,PlaceDraft> open,java.util.function.ToIntBiFunction<PlaceDraft,PlaceDraft> travel,boolean allowReplacement,int focusDay) {
         TripDraft result = repairCafeOrder(durations(draft, profile), pool, profile, open, travel);
         for (var originalDay : result.days()) {
+            if(focusDay>0&&originalDay.dayNumber()!=focusDay)continue;
             int number = originalDay.dayNumber();
             DayDraft day = result.days().get(number - 1);
             if (profile == 2 || day.places().stream().filter(DraftVisitPlanner::counted).count() < MIN[profile]) {
@@ -140,12 +189,12 @@ final class DraftVisitPlanner {
                 if (!TripRouteOptimizer.fits(candidate, moved.visitTime(), Map.of(candidate, TravelSchedule.minute(candidate.visitTime())))) continue;
                 var others = without(day, previous);
                 var replaced = insert(draft, others, moved, open, travel);
-                if (replaced == null || !safe(draft, replaced)) continue;
+                if (replaced == null) continue;
                 var expanded = new HashMap<Integer,List<PlaceDraft>>(pool);
                 var choices = new ArrayList<>(pool.getOrDefault(day.dayNumber(), List.of()));
                 choices.add(previous);
                 expanded.put(day.dayNumber(), choices);
-                var trial = fit(replaced, expanded, profile, open, travel, false);
+                var trial = fit(replaced, expanded, profile, open, travel, false,day.dayNumber());
                 if (trial.days().get(day.dayNumber()-1).places().stream().filter(DraftVisitPlanner::counted).count() >= MIN[profile]
                         && safe(draft, trial)) return trial;
             }
@@ -262,11 +311,11 @@ final class DraftVisitPlanner {
         visits.add(candidate);
         var trial = replace(draft, day, visits);
         var updated = trial.days().get(day.dayNumber() - 1);
-        if (!safe(draft, trial) || !open.test(updated, candidate)
-                || !reachable(trial, without(updated, candidate), candidate, travel)) return null;
+        if (!reachable(trial, without(updated, candidate), candidate, travel)
+                || !open.test(updated, candidate)) return null;
         if (shifted != null && (!free(without(updated, shifted), shifted, draft.travelDetails())
                 || !open.test(updated, shifted) || !reachable(trial, without(updated, shifted), shifted, travel))) return null;
-        return trial;
+        return safe(draft, trial) ? trial : null;
     }
 
     private static DayDraft without(DayDraft day, PlaceDraft place) {
@@ -446,6 +495,25 @@ final class DraftVisitPlanner {
                 ? new DayDraft(d.dayNumber(), d.date(), List.copyOf(visits)) : d).toList();
         return DraftVariants.withDays(draft, days, draft.warnings(), null, null);
     }
+    private static boolean mealsNotWorse(TripDraft before,TripDraft trial,boolean checkCafes) {
+        boolean same=Objects.equals(before.travelDetails(),trial.travelDetails())&&Objects.equals(before.effectiveRequest(),trial.effectiveRequest())&&before.days().size()==trial.days().size();
+        boolean removed=false,subset=true;
+        if(same)for(int i=0;i<before.days().size();i++) {
+            var original=before.days().get(i);var changed=trial.days().get(i);
+            if(original.dayNumber()!=changed.dayNumber()||!Objects.equals(original.date(),changed.date())
+                ||!original.places().stream().filter(p->"식당".equals(p.category())).toList().equals(changed.places().stream().filter(p->"식당".equals(p.category())).toList())){same=false;break;}
+            if(DraftMealPlanner.mealOrderViolations(changed.places())>DraftMealPlanner.mealOrderViolations(original.places()))return false;
+            subset&=original.places().containsAll(changed.places());
+            removed|=changed.places().size()<original.places().size();
+        }
+        if(same) {
+            // Strict timing and cafe checks have already run in safe. Unchanged meals retain their checked windows and menus.
+            if(validMeals(before,checkCafes))return true;
+            return subset&&removed;
+        }
+        return validMeals(trial,checkCafes);
+    }
+
     private static boolean safe(TripDraft before, TripDraft trial) {
         Set<String> covered = new HashSet<>(), after = new HashSet<>();
         before.days().forEach(d -> covered.addAll(DraftOptionComposer.coverage(d.places(), before.styles())));
@@ -456,7 +524,7 @@ final class DraftVisitPlanner {
             TravelSchedule.validateDraft(trial);
             int oldCafes = cafeViolationCount(before), newCafes = cafeViolationCount(trial);
             if (newCafes > 0 && newCafes >= oldCafes) return false;
-            if (trial.days().stream().flatMap(d -> d.places().stream()).anyMatch(DraftMealPlanner::scheduledMeal)) DraftMealPlanner.require(trial, newCafes == 0);
+            if (trial.days().stream().flatMap(d -> d.places().stream()).anyMatch(DraftMealPlanner::scheduledMeal) && !mealsNotWorse(before,trial,newCafes==0))return false;
             return true;
         } catch (IllegalArgumentException | ApiException e) { return false; }
     }

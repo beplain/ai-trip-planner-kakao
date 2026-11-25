@@ -3,6 +3,8 @@ package com.tripplanner.trip;
 import com.tripplanner.ai.OpenAiItineraryClient;
 import com.tripplanner.trip.TripDtos.*;
 import java.util.*;
+import java.util.concurrent.*;
+import com.fasterxml.jackson.databind.JsonNode;
 
 /** Complete saved descriptions after map/meal/profile substitutions, never while rendering cards. */
 final class FinalRecommendations {
@@ -36,10 +38,9 @@ final class FinalRecommendations {
         var targetIds=targets.stream().map(PlaceDraft::placeId).collect(java.util.stream.Collectors.toSet());
         var generated=new HashMap<String,String>();
         try {
-            var facts=targets.stream().map(p->Map.of("id",p.placeId(),"name",p.name(),"category",Objects.toString(p.category(),""),"categoryPath",Objects.toString(p.categoryPath(),""))).toList();
-            var response=ai.describeFinalPlaces(facts);
+            var responses=describeBatches(targets,ai);
             Set<String> sentences=new HashSet<>();
-            for(var row:response) {
+            for(var response:responses)for(var row:response) {
                 String id=row.path("id").asText(),line=row.path("reason").asText().replaceAll("\\s+"," ").trim();
                 var p=places.get(id);
                 if(p==null || !targetIds.contains(id) || generated.containsKey(id) || line.length()<12 || line.length()>140)continue;
@@ -66,6 +67,45 @@ final class FinalRecommendations {
         }
         return List.copyOf(result);
     }
+    static List<TripDraft> reuseDescriptions(List<TripDraft> drafts,List<TripDraft> prepared) {
+        var saved=new HashMap<String,PlaceDraft>();
+        for(var d:prepared)for(var day:d.days())for(var p:day.places())if(p.fixedEventId()==null&&!text(p).isBlank())saved.putIfAbsent(p.placeId(),p);
+        var frequency=new HashMap<String,Integer>();var ids=new HashSet<String>();
+        for(var d:drafts)for(var day:d.days())for(var p:day.places())if(p.fixedEventId()==null&&ids.add(p.placeId())&&!text(p).isBlank())frequency.merge(text(p),1,Integer::sum);
+        return drafts.stream().map(d->DraftVariants.withDays(d,d.days().stream().map(day->new DayDraft(day.dayNumber(),day.date(),day.places().stream().map(p->{
+            var prior=saved.get(p.placeId());
+            if(p.fixedEventId()!=null||prior==null||!Objects.equals(prior.name(),p.name())||!Objects.equals(prior.category(),p.category())||!Objects.equals(prior.categoryPath(),p.categoryPath())
+                ||(!text(p).isBlank()&&frequency.getOrDefault(text(p),0)<=1))return p;
+            String[] parts=Objects.toString(p.reason(),"").split(" · ",4);
+            String prefix=Objects.toString(p.reason(),"").startsWith("식사 일정 · ")&&parts.length>=3?parts[0]+" · "+parts[1]+" · "+parts[2]+" · ":"";
+            return copy(p,prefix+text(prior));
+        }).toList())).toList(),d.warnings(),d.options(),d.selectedOption())).toList();
+    }
+
+    static List<JsonNode> describeBatches(List<PlaceDraft> targets,OpenAiItineraryClient ai) {
+        var facts=targets.stream().map(p->Map.of("id",p.placeId(),"name",p.name(),"category",Objects.toString(p.category(),""),"categoryPath",Objects.toString(p.categoryPath(),""))).toList();
+        if(facts.size()<=8)return List.of(ai.describeFinalPlaces(facts));
+        int workers=facts.size()>32?8:4;
+        int size=(facts.size()+workers-1)/workers;
+        var executor=Executors.newFixedThreadPool(workers,task->{var thread=new Thread(task,"place-descriptions");thread.setDaemon(true);return thread;});
+        long started=System.nanoTime();
+        try {
+            var tasks=new ArrayList<Callable<JsonNode>>();
+            for(int from=0;from<facts.size();from+=size) {
+                var batch=List.copyOf(facts.subList(from,Math.min(facts.size(),from+size)));
+                tasks.add(()->ai.describeFinalPlaces(batch));
+            }
+            var responses=new ArrayList<JsonNode>();
+            for(var job:executor.invokeAll(tasks))try{responses.add(job.get());}
+            catch(ExecutionException failure){org.slf4j.LoggerFactory.getLogger(FinalRecommendations.class).warn("장소 추천 문구 묶음 보완 미완료: {}",failure.getCause().getClass().getSimpleName());}
+            return responses;
+        } catch(InterruptedException failure){Thread.currentThread().interrupt();throw new IllegalStateException("추천 문구 생성 중단",failure);}
+        finally {
+            executor.shutdownNow();
+            org.slf4j.LoggerFactory.getLogger(FinalRecommendations.class).info("추천 문구 병렬 생성: 장소={} 소요={}ms",facts.size(),TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started));
+        }
+    }
+
     private static PlaceDraft copy(PlaceDraft p,String reason) {
         return new PlaceDraft(p.placeId(),p.name(),p.address(),p.latitude(),p.longitude(),p.visitTime(),reason,p.note(),p.category(),p.verified(),p.placeUrl(),p.phone(),p.fixedEventId(),p.categoryPath(),p.businessHours(),p.durationMinutes());
     }

@@ -13,4 +13,6 @@ public class TrainStationRecommendationController {
     public StationRecommendation recommend(@Valid @RequestBody TrainLookupRequest request) { return service.recommend(request.transport(),request.date()); }
     @PostMapping("/station-candidates")
     public java.util.List<SelectedPlace> candidates(@Valid @RequestBody StationCandidatesRequest request) { return service.candidates(request.origin(),request.destination()); }
+    @GetMapping("/stations") public java.util.List<String> stations() { return service.stationCatalog(); }
+    @GetMapping("/stations/{name}/location") public SelectedPlace location(@PathVariable String name) { return service.catalogLocation(name); }
 }

@@ -107,7 +107,7 @@ class TripGenerationRulesTests {
             var partial=service.generate(request());
             assertEquals("BEST_EFFORT",partial.source());
             assertTrue(partial.days().stream().allMatch(day->day.places().isEmpty()));
-            assertEquals(2, ai.calls);
+            assertEquals(1, ai.calls, "A failed response is repaired once without another AI request");
         } finally { service.shutdown(); }
     }
     @Test void aiGenerationReceivesDetailsAndInjectsFixedItemsWithoutConsumingStyles() {
@@ -144,7 +144,7 @@ class TripGenerationRulesTests {
             assertTrue(draft.days().stream().allMatch(d -> d.places().stream().anyMatch(p -> "쇼핑".equals(p.category()))));
         } finally { service.shutdown(); }
     }
-    @Test void secondAiCallStillRunsWhenLocalRepairCannotFindVerifiedCandidates() {
+    @Test void noSecondAiCallWhenLocalRepairCannotFindVerifiedCandidates() {
         var first=new AiItinerary("부산",List.of(
             new AiDay(1,List.of(shop("없는상점A"),food("없는식당A")),List.of()),
             new AiDay(2,List.of(shop("없는상점B"),food("없는식당B")),List.of())));
@@ -164,10 +164,11 @@ class TripGenerationRulesTests {
         var service=new TripGenerationService(ai,new SampleItineraryGenerator(),places);
         try {
             var result=service.generate(request());
-            assertEquals(2,ai.calls);assertNotNull(ai.feedback);
+            assertEquals(1,ai.calls);assertNull(ai.feedback);
             assertEquals(2,result.days().size());
             assertTrue(result.days().stream().flatMap(d->d.places().stream()).allMatch(TripDtos.PlaceDraft::verified));
-            assertDoesNotThrow(() -> DraftOptionComposer.requireCoverage(result));
+            assertEquals("BEST_EFFORT",result.source());
+            assertTrue(result.days().stream().allMatch(day->day.places().isEmpty()));
         }finally {service.shutdown();}
     }
 

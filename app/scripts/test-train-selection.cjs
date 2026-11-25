@@ -159,5 +159,7 @@ function button(tree,text){return flatten(tree).find((n)=>n.type==='Pressable'&&
  modes.props.onChange('CAR');assert.equal(current.transport.departureTime,'20:00');
  const departure=flatten(render()).filter(n=>n.type==='TimeField'&&n.props.label==='출발 시각').at(-1);
  assert.equal(departure.props.value,'20:00');assert.equal(departure.props.initialTime,'20:00');
+ current={...current,transport:{...current.transport,departureTime:'18:00'}};
+ modes.props.onChange('PLANE');assert.equal(current.transport.departureTime,'20:00','New air travel defaults the return departure preference to 20:00');
  console.log('Train selection checks passed: default and alternate arrivals, stale responses, date/station/time changes, and manual fallback.');
 })().catch((error)=>{console.error(error);process.exitCode=1;});

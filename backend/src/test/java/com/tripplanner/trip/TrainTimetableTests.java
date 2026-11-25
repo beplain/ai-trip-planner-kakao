@@ -15,6 +15,16 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.hamcrest.Matchers.containsString;
 
 class TrainTimetableTests {
+    @Test void stationAliasesMatchBetweenKakaoAndOfficialTimetable() throws Exception {
+        var builder=RestClient.builder(); var server=MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(containsString("GetCtyCodeList"))).andRespond(withSuccess(page(Map.of("citycode","32","cityname","강원특별자치도"),1),MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("GetCtyAcctoTrainSttnList"))).andRespond(withSuccess(page(List.of(Map.of("nodeid","JINBU","nodename","진부(오대산)"),Map.of("nodeid","GANGNEUNG","nodename","강릉")),2),MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("GetStrtpntAlocFndTrainInfo"))).andExpect(queryParam("depPlaceId","JINBU"))
+            .andRespond(withSuccess(page(Map.of("trainno","801","traingradename","KTX-이음","depplandtime","20270501090000","arrplandtime","20270501093000","depplacename","진부(오대산)","arrplacename","강릉"),1),MediaType.APPLICATION_JSON));
+        var from=station("진부역 경강선","강원특별자치도 평창군","1"); var to=station("강릉역 경강선","강원특별자치도 강릉시","2");
+        var t=new Transport(TransportMode.KTX,to.name(),"10:00",to.name(),"20:00",to,to,from,"08:00",true);
+        assertEquals("801",new TrainTimetableClient("test",builder.build()).options(t,DATE).get(0).trainNo()); server.verify();
+    }
     static final LocalDate DATE=LocalDate.of(2027,5,1);
     static final ObjectMapper JSON=new ObjectMapper();
     static SelectedPlace station(String name,String address,String id) { return new SelectedPlace(id,name,address,37.,127.,null); }

@@ -66,10 +66,10 @@ export function PlaceCard({ place, visitDate, index, isLast, color = C.primary, 
         )}
 
         <View testID="place-links" style={s.linkRow}>
-          <Pressable onPress={() => { void openDirections(place); }}><Text style={s.linkText}>길찾기</Text></Pressable>
           <Pressable onPress={() => openPlacePage(place)}>
             <Text style={s.linkText}>정보</Text>
           </Pressable>
+          <Pressable onPress={() => { void openDirections(place); }}><Text style={s.linkText}>길찾기</Text></Pressable>
           {!!place.phone && (
             <Pressable onPress={() => Linking.openURL(`tel:${place.phone!.replace(/[^0-9+]/g, '')}`).catch(() => undefined)}>
               <Text style={s.linkText}>전화</Text>

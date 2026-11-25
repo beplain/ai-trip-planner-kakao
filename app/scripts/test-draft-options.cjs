@@ -8,6 +8,7 @@ const mocks={
  'react/jsx-runtime':{jsx,jsxs:jsx},'react-native':new Proxy({},{get:(_,k)=>k}),
  'expo-router':{router:{},useLocalSearchParams:()=>({id:'7'}),useFocusEffect(){}},
  '@/hooks/use-drag-scroll':{useDragScroll:()=>({controller:{isDragging:()=>false},dragging:false})},
+ '@/hooks/use-cross-day-drag':{useCrossDayDrag:()=>({bind:()=>({}),dayLayout:()=>()=>{}})},
  '@/hooks/use-draft-edit':{useDraftEdit:()=>({blocked:false,message:'',begin:async()=>true,release:async()=>{},getStatus:()=>({version:server.version})})},
  '@/components/use-screen-alert':{useScreenAlert:()=>({alert:()=>{},dialog:null})},
  '@/lib/styles':{C:{},s:{},DAY_COLORS:['blue']},'@/lib/format':new Proxy({ROLE_LABEL:{}},{get:(o,k)=>o[k]??(v=>v)}),
@@ -21,6 +22,7 @@ function nodes(n){return !n||typeof n!=='object'?[]:[n,...[n.props?.children].fl
 function tabs(){si=ri=0;return nodes(ctx.exports.DraftScreen()).filter(n=>n.props?.accessibilityRole==='tab');}
 async function settle(){for(let i=0;i<40;i++)await Promise.resolve();}
 (async()=>{
+ si=ri=0; const refresh=nodes(ctx.exports.DraftScreen()).find(n=>n.props?.accessibilityLabel==='초안 새로고침');assert(refresh);assert.equal(refresh.props.style.position,'absolute');
  tabs()[1].props.onPress();assert.equal(tabs()[1].props.accessibilityState.selected,true,'Preview changes before network replies');
  tabs()[2].props.onPress();assert.equal(tabs()[2].props.accessibilityState.selected,true);await settle();assert.equal(writes.length,1);assert.equal(writes[0].target,'c','Pending taps coalesce to the most recent selection');
  assert.equal(tabs()[0].props.disabled,false,'Type tabs remain usable while saving a type');tabs()[0].props.onPress();assert.equal(tabs()[0].props.accessibilityState.selected,true);

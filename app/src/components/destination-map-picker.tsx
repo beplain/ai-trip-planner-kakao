@@ -15,8 +15,8 @@ import { C, s } from '@/lib/styles';
 
 const JS_KEY = process.env.EXPO_PUBLIC_KAKAO_JS_KEY ?? '';
 
-function PickerContent({ initialDestination = '', onSelect, onClose, onPlaceSelect, placeKind = 'lodging', centerOnUser = false, initialRegion, initialCenter, pickerTitle }: {
-  initialDestination: string; onSelect: (destination: string) => void; onClose: () => void; onPlaceSelect?: (place: LodgingPlace) => void; placeKind?: 'lodging' | 'transport' | 'visit'; centerOnUser?: boolean; initialRegion?: string; initialCenter?: Pick<LodgingPlace, 'latitude' | 'longitude'>; pickerTitle?: string;
+function PickerContent({ initialDestination = '', onSelect, onClose, onPlaceSelect, placeKind = 'lodging', centerOnUser = false, initialRegion, initialCenter, transportFocus, pickerTitle }: {
+  initialDestination: string; onSelect: (destination: string) => void; onClose: () => void; onPlaceSelect?: (place: LodgingPlace) => void; placeKind?: 'lodging' | 'transport' | 'visit'; centerOnUser?: boolean; initialRegion?: string; initialCenter?: Pick<LodgingPlace, 'latitude' | 'longitude'>; transportFocus?: 'airport'; pickerTitle?: string;
 }) {
   const lodging = !!onPlaceSelect;
   const [selectedPlace, setSelectedPlace] = useState<LodgingPlace | null>(null);
@@ -44,8 +44,8 @@ function PickerContent({ initialDestination = '', onSelect, onClose, onPlaceSele
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latitude=initialCenter?.latitude, longitude=initialCenter?.longitude;
   const html = useMemo(() => lodging ? buildLodgingMapHtml(JS_KEY, placeKind, initialRegion,
-    latitude!==undefined&&longitude!==undefined?{latitude,longitude}:undefined)
-    : buildDestinationMapHtml(JS_KEY), [lodging, placeKind, initialRegion, latitude, longitude]);
+    latitude!==undefined&&longitude!==undefined?{latitude,longitude}:undefined, transportFocus)
+    : buildDestinationMapHtml(JS_KEY), [lodging, placeKind, initialRegion, latitude, longitude, transportFocus]);
 
   const updateMapLoad = useCallback((action: MapLoadAction) => {
     const next = mapLoadState(mapLoad.current, action);
@@ -251,13 +251,13 @@ function PickerContent({ initialDestination = '', onSelect, onClose, onPlaceSele
   );
 }
 
-export function DestinationMapPicker({ visible, initialDestination, onSelect, onClose, onPlaceSelect, placeKind = 'lodging', centerOnUser = false, initialRegion, initialCenter, pickerTitle }: {
-  visible: boolean; initialDestination: string; onSelect: (destination: string) => void; onClose: () => void; onPlaceSelect?: (place: LodgingPlace) => void; placeKind?: 'lodging' | 'transport' | 'visit'; centerOnUser?: boolean; initialRegion?: string; initialCenter?: Pick<LodgingPlace, 'latitude' | 'longitude'>; pickerTitle?: string;
+export function DestinationMapPicker({ visible, initialDestination, onSelect, onClose, onPlaceSelect, placeKind = 'lodging', centerOnUser = false, initialRegion, initialCenter, transportFocus, pickerTitle }: {
+  visible: boolean; initialDestination: string; onSelect: (destination: string) => void; onClose: () => void; onPlaceSelect?: (place: LodgingPlace) => void; placeKind?: 'lodging' | 'transport' | 'visit'; centerOnUser?: boolean; initialRegion?: string; initialCenter?: Pick<LodgingPlace, 'latitude' | 'longitude'>; transportFocus?: 'airport'; pickerTitle?: string;
 }) {
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
       <SafeAreaProvider>
-        {visible && <PickerContent initialDestination={initialDestination} onSelect={onSelect} onClose={onClose} onPlaceSelect={onPlaceSelect} placeKind={placeKind} centerOnUser={centerOnUser} initialRegion={initialRegion} initialCenter={initialCenter} pickerTitle={pickerTitle} />}
+        {visible && <PickerContent initialDestination={initialDestination} onSelect={onSelect} onClose={onClose} onPlaceSelect={onPlaceSelect} placeKind={placeKind} centerOnUser={centerOnUser} initialRegion={initialRegion} initialCenter={initialCenter} transportFocus={transportFocus} pickerTitle={pickerTitle} />}
       </SafeAreaProvider>
     </Modal>
   );

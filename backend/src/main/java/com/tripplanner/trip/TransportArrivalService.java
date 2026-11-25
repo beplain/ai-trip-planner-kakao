@@ -52,11 +52,11 @@ public class TransportArrivalService {
         if(d.transport().mode()==TransportMode.PLANE) {
             var t=d.transport();
             if(r.startDate()==null) throw ApiException.badRequest("항공편을 이용하는 여행 날짜를 선택해 주세요.");
-            var outbound=flight(t.flight(),r.startDate(),t.originLocation(),t.arrivalLocation(),t.arrivalAuto());
-            var inbound=flight(t.returnFlight(),r.startDate().plusDays(r.days()-1),t.departureLocation(),t.returnArrivalLocation(),!Boolean.FALSE.equals(t.returnArrivalAuto()));
+            var outbound=flight(t.flight(),r.startDate(),t.boardingStation()!=null?t.boardingStation():t.originLocation(),t.arrivalLocation(),t.arrivalAuto());
+            var inbound=flight(t.returnFlight(),r.startDate().plusDays(r.days()-1),t.returnBoardingStation()!=null?t.returnBoardingStation():t.departureLocation(),t.returnArrivalLocation(),!Boolean.FALSE.equals(t.returnArrivalAuto()));
             var resolved=new Transport(t.mode(),t.arrivalPlace(),outbound==null?t.arrivalTime():outbound.arrivalTime(),t.departurePlace(),inbound==null?t.departureTime():inbound.departureTime(),
                 t.arrivalLocation(),t.departureLocation(),t.originLocation(),outbound==null?t.originTime():outbound.departureTime(),t.arrivalAuto(),null,
-                t.returnArrivalLocation(),null,inbound==null?t.returnArrivalTime():inbound.arrivalTime(),t.returnArrivalAuto(),null,null,null,null,outbound,inbound);
+                t.returnArrivalLocation(),null,inbound==null?t.returnArrivalTime():inbound.arrivalTime(),t.returnArrivalAuto(),t.boardingStation(),t.returnBoardingStation(),null,null,outbound,inbound);
             return new GenerateRequest(r.destination(),r.startDate(),r.days(),r.budget(),r.styles(),r.request(),new TravelDetails(d.movementMode(),d.stays(),resolved));
         }
         if(!d.transport().arrivalAuto() && d.transport().returnArrivalLocation()==null) return r;

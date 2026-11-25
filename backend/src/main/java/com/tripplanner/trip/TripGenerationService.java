@@ -47,6 +47,9 @@ public class TripGenerationService {
         thread.setDaemon(true);
         return thread;
     });
+    private final ExecutorService earlyLookups=Executors.newFixedThreadPool(4,task->{
+        var thread=new Thread(task,"generation-prefetch");thread.setDaemon(true);return thread;
+    });
     // Search orchestration waits for tasks in pool, so it must run on a separate executor.
     private final ExecutorService restaurantSearches = Executors.newFixedThreadPool(2);
 
@@ -82,6 +85,7 @@ public class TripGenerationService {
 
     @PreDestroy
     void shutdown() {
+        earlyLookups.shutdownNow();
         restaurantSearches.shutdownNow();
         pool.shutdownNow();
     }
@@ -157,19 +161,25 @@ public class TripGenerationService {
         req = prepared.request();
         String originalRequest = prepared.originalRequest();
         long started = System.nanoTime();
+        GoogleHoursScheduler.Session googleSession=googleHours==null?null:googleHours.session();
+        Future<?> warmHours=startEarlyHours(prepared,googleSession);
+        Future<List<TripDraft>> restaurantDescriptions=startRestaurantDescriptions(prepared);
+        Future<List<TripDraft>> descriptionWarmup=null;
         try {
             Map<Integer,List<PlaceDraft>> candidates = new HashMap<>();
             var generated = generateWithRestaurants(req, prepared.lookups(), candidates, prepared.restaurants());
             TripDraft base = generated.draft().withRequestMetadata(originalRequest, prepared.interpretedRequest());
             checkpoint.accept(base);
             long composeStarted=System.nanoTime();
-            GoogleHoursScheduler.Session googleSession=googleHours==null?null:googleHours.session();
+            if(googleSession!=null)googleSession.beginScheduling();
             if(googleSession!=null)googleSession.requireRequestedPlacesOpen(base,candidates);
             List<TripDraft> composed;
             try {composed = composeOptions(base,candidates,req,prepared.lookups());}
             finally {logStage("유형구성",composeStarted);}
             List<PlaceDraft> restaurants = generated.restaurants();
             if (scheduleMeals) composed = scheduleOptionMeals(base, composed, candidates, restaurants, googleSession);
+            var descriptionSeeds=List.copyOf(composed);
+            descriptionWarmup=earlyLookups.submit(()->FinalRecommendations.fill(FinalRecommendations.reuseDescriptions(descriptionSeeds,restaurantDescriptions==null?List.of():join(restaurantDescriptions,"식당 추천 문구 선조회 중단")),openAi));
             if(googleSession!=null) {
                 long hoursStarted=System.nanoTime();
                 try {
@@ -208,12 +218,13 @@ public class TripGenerationService {
             List<TripDtos.DraftOption> options = new ArrayList<>(); Set<String> seen = new HashSet<>();
             List<TripDraft> verified=new ArrayList<>();
             Map<Integer,String> failureReasons = new java.util.concurrent.ConcurrentHashMap<>();
+            final var verificationRoutes=routeSession;
             try {
                 List<Callable<TripDraft>> checks=new ArrayList<>();
                 for (int index = 0; index < routed.size(); index++) {
                     int profile = index;
                     TripDraft candidate = routed.get(index);
-                    checks.add(() -> { Thread.interrupted(); return verifiedOption(candidate, googleSession, profile, failureReasons); });
+                    checks.add(() -> { Thread.interrupted(); return verifiedOption(candidate, googleSession, profile, failureReasons,verificationRoutes); });
                 }
                 for(var job:pool.invokeAll(checks)) verified.add(join(job,"여행 유형 검증이 중단됐습니다. 다시 시도해 주세요."));
             } catch(InterruptedException e) {
@@ -225,47 +236,49 @@ public class TripGenerationService {
                 if(draft==null || seen.contains(scheduleMeals ? DraftVisitPlanner.fingerprint(draft) : DraftOptionComposer.fingerprint(draft))) {
                     TripDraft anchor=draft!=null?draft:routed.get(i);
                     log.info("여행 유형 재구성: 유형={} 사유={}",ids[i],draft==null?"최종검증 실패":"다른 유형과 장소·순서 중복");
-                    List<TripDraft> attempts=new ArrayList<>();
-                    // Restore missing styles before spending the bounded meal-repair attempts on unchanged profiles.
-                    attempts.addAll(DraftOptionComposer.recoveryCandidates(anchor,candidates));
-                    if (scheduleMeals) {
-                        attempts.add(composed.get(i));
-                        attempts.add(base);
-                    }
-                    for(boolean minimal:new boolean[]{i==1,i!=1})try{attempts.add(DraftOptionComposer.fallback(anchor,minimal));}catch(IllegalArgumentException ignored){}
-                    if(!options.isEmpty())for(var option:List.copyOf(options))try{attempts.add(DraftOptionComposer.fallback(option.draft(),false));}catch(IllegalArgumentException ignored){}
-
-                    if(!options.isEmpty())attempts.addAll(DraftOptionComposer.recoveryCandidates(options.get(0).draft(),candidates));
-                    if (scheduleMeals) {
-                        List<TripDraft> mealAttempts = new ArrayList<>();
-                        for (int attempt = 0; attempt < Math.min(attempts.size(), 8); attempt++) {
-                            var candidate = attempts.get(attempt);
-                            try {
-                                mealAttempts.add(scheduleMeals(candidate, candidates, restaurants, googleSession, i + attempt + 1, i));
-                            } catch (ApiException e) {
-                                log.info("식사 재배치 실패: {}", e.getMessage());
-                            }
-                        }
-                        attempts = mealAttempts;
-                    }
+                    long recoveryStarted=System.nanoTime();
+                    final int profile=i;
+                    String initialReason=failureReasons.get(i);
+                    boolean duplicate=draft!=null;
                     draft=null;
-                    var recoveryRoutes=routeSession==null?null:routeSession.share();
-                    var recovered=routedItinerary==null?attempts:googleSession==null?routedItinerary.adjustOptions(attempts,d->(p,time)->true,recoveryRoutes)
-                        :routedItinerary.adjustOptions(attempts,d->(p,time)->googleSession.fits(d,p,time),recoveryRoutes);
-                    if(recoveryRoutes!=null) routeSession=recoveryRoutes;
-                    for(var candidate:recovered) {
-                        var fitted = scheduleMeals ? fitProfile(candidate, candidates, googleSession, routeSession, i) : candidate;
-                        var checked=verifiedOption(fitted,googleSession,i,failureReasons);
-                        if(checked!=null&&!seen.contains(scheduleMeals ? DraftVisitPlanner.fingerprint(checked) : DraftOptionComposer.fingerprint(checked))){draft=checked;break;}
+                    try {
+                        TripDraft candidate=recoveryCandidate(anchor,candidates,i,initialReason,duplicate);
+                        if(candidate!=null) {
+                            if(scheduleMeals) candidate=scheduleMeals(candidate,candidates,restaurants,googleSession,i+1,i);
+                            var recoveryRoutes=routeSession==null?null:routeSession.share();
+                            if(routedItinerary!=null) {
+                                var one=List.of(candidate);
+                                candidate=(googleSession==null?routedItinerary.adjustOptions(one,d->(p,time)->true,recoveryRoutes)
+                                    :routedItinerary.adjustOptions(one,d->(p,time)->googleSession.fits(d,p,time),recoveryRoutes)).get(0);
+                            }
+                            if(recoveryRoutes!=null)routeSession=recoveryRoutes;
+                            var fitted=scheduleMeals?fitProfile(candidate,candidates,googleSession,routeSession,i):candidate;
+                            final var recoveryVerificationRoutes=routeSession;
+                            var checked=verifyChangedOption(anchor,fitted,d->verifiedOption(d,googleSession,profile,failureReasons,recoveryVerificationRoutes));
+                            if(checked!=null&&!seen.contains(scheduleMeals?DraftVisitPlanner.fingerprint(checked):DraftOptionComposer.fingerprint(checked)))draft=checked;
+                            if(fitted.equals(anchor))log.info("여행 유형 보완 생략: 유형={} 사유=동일 일정 재검사 방지",ids[i]);
+                        }
+                    } catch(ApiException | IllegalArgumentException repairFailure) {
+                        failureReasons.put(i,repairFailure.getMessage());
+                    } finally {
+                        log.info("여행 유형 보완 결과: 유형={} 결과={} 최초사유={} 최종사유={} 소요={}ms",ids[i],draft==null?"가능한 초안 반환":"성공",
+                            initialReason,failureReasons.get(i),TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-recoveryStarted));
                     }
+
                 }
                 if(draft==null) draft=BestEffortDrafts.create(req,routed.get(i),ApiException.badRequest(labels[i]+": "+failureReasons.getOrDefault(i,"유형별 차이를 확보하지 못했습니다.")));
                 seen.add(scheduleMeals ? DraftVisitPlanner.fingerprint(draft) : DraftOptionComposer.fingerprint(draft));
                 options.add(new TripDtos.DraftOption(ids[i],labels[i],descriptions[i],draft));
             }
             if(options.size()!=3)throw ApiException.badRequest("세 가지 여행 유형을 모두 준비하지 못했습니다. 다시 생성해 주세요.");
+            long descriptionStarted=System.nanoTime();
+            var described=FinalRecommendations.reuseDescriptions(options.stream().map(TripDtos.DraftOption::draft).toList(),join(descriptionWarmup,"추천 문구 준비가 중단됐습니다."));
+            for(int i=0;i<options.size();i++) {
+                var option=options.get(i);options.set(i,new TripDtos.DraftOption(option.id(),option.label(),option.description(),described.get(i)));
+            }
+            logStage("병렬추천문구잔여대기",descriptionStarted);
             return new TripDtos.DraftOptions(options,List.of());
-        } finally { log.info("일정 생성 단계=초안선택지전체 소요={}ms",TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)); }
+        } finally { if(restaurantDescriptions!=null&&!restaurantDescriptions.isDone())restaurantDescriptions.cancel(true); if(descriptionWarmup!=null&&!descriptionWarmup.isDone())descriptionWarmup.cancel(true); if(warmHours!=null&&!warmHours.isDone())warmHours.cancel(true); log.info("일정 생성 단계=초안선택지전체 소요={}ms",TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)); }
     }
 
     private List<TripDraft> composeOptions(TripDraft base, Map<Integer,List<PlaceDraft>> candidates, GenerateRequest request, KakaoLocalClient lookups) {
@@ -373,6 +386,30 @@ public class TripGenerationService {
         }
     }
 
+    private Future<List<TripDraft>> startRestaurantDescriptions(Prepared prepared) {
+        if(!scheduleMeals||!openAi.enabled())return null;
+        return earlyLookups.submit(()->{
+            var restaurants=join(prepared.restaurants(),"식당 문구 후보 준비 중단");
+            var selected=DraftMealPlanner.earlyLookups(prepared.request(),restaurants);
+            var req=prepared.request();
+            var seed=new TripDraft(req.destination(),req.destination(),req.startDate(),req.startDate(),req.budget(),req.styles(),
+                List.of(new DayDraft(1,req.startDate(),selected)),"DESCRIPTION_PREFETCH",List.of());
+            return FinalRecommendations.fill(List.of(seed),openAi);
+        });
+    }
+
+    private Future<?> startEarlyHours(Prepared prepared,GoogleHoursScheduler.Session hours) {
+        if(!scheduleMeals||hours==null)return null;
+        return earlyLookups.submit(()->{
+            long started=System.nanoTime();
+            try {
+                var restaurants=join(prepared.restaurants(),"식당 후보 선조회가 중단됐습니다.");
+                hours.prefetchPlaces(DraftMealPlanner.earlyLookups(prepared.request(),restaurants));
+            } catch(RuntimeException failure) {log.info("영업시간 병렬 선조회 미완료: 유형={}",failure.getClass().getSimpleName());}
+            finally {logStage("AI생성중영업시간선조회",started);}
+        });
+    }
+
     private record Prepared(GenerateRequest request, String originalRequest, String interpretedRequest,
                             KakaoLocalClient lookups, Future<List<PlaceDraft>> restaurants) {}
 
@@ -400,9 +437,10 @@ public class TripGenerationService {
                 try {
                     return scheduleMeals(option, candidates, restaurants, hours, variant);
                 } catch (ApiException e) {
-                    if (variant == 0) throw e;
-                    log.info("여행 유형 식사 재구성: 유형={} 이유={}", variant, e.getMessage());
-                    return scheduleMeals(base, candidates, restaurants, hours, variant);
+
+                    log.info("여행 유형 식사 보완 보류: 유형={} 이유={}", variant, e.getMessage());
+                    // Keep the seed; the final profile stage owns the single repair attempt.
+                    return option;
                 }
             });
         }
@@ -447,9 +485,35 @@ public class TripGenerationService {
                         : session.minutes(a, b).orElse(visitFallbackTravelMinutes(draft.travelDetails())));
     }
 
-    private TripDraft verifiedOption(TripDraft candidate,GoogleHoursScheduler.Session hours,int profile,Map<Integer,String> failureReasons) {
+    // Only one repair pipeline runs per profile. Select it according to the failed constraint.
+    static TripDraft recoveryCandidate(TripDraft anchor,Map<Integer,List<PlaceDraft>> candidates,int profile,String reason,boolean duplicate) {
+        if(duplicate) {
+            try {return DraftOptionComposer.fallback(anchor,profile==1);}
+            catch(IllegalArgumentException | ApiException ignored){return null;}
+        }
+        if(reason!=null&&(reason.contains("스타일")||reason.contains("추가 요청")||reason.contains("필수 장소"))) {
+            return DraftOptionComposer.recoveryCandidates(anchor,candidates).stream().filter(d->!d.equals(anchor)).findFirst().orElse(anchor);
+        }
+        // Meal slots, visit counts and travel conflicts are repaired on the failed schedule itself.
+        return anchor;
+    }
+
+    static TripDraft verifyChangedOption(TripDraft original,TripDraft repaired,java.util.function.UnaryOperator<TripDraft> verify) {
+        return original.equals(repaired)?null:verify.apply(repaired);
+    }
+
+    private TripDraft verifiedOption(TripDraft candidate,GoogleHoursScheduler.Session hours,int profile,Map<Integer,String> failureReasons,RouteTimeClient.Session routes) {
         TripDraft result=hours==null?checkHours(candidate):hours.verifyOption(candidate);
         if(result==null){failureReasons.put(profile,"일반 방문 장소를 확보하지 못했습니다.");log.info("여행 유형 검증 탈락: 일반 방문 없음");return null;}
+        if(scheduleMeals) {
+            final var seed=result;
+            result=DraftVisitPlanner.trimExcess(result,profile,(day,p)->hours==null||hours.canVisit(seed,day,p),(a,b)->{
+                if(routes==null)return visitFallbackTravelMinutes(seed.travelDetails());
+                synchronized(routes){return routes.minutes(a,b).orElse(visitFallbackTravelMinutes(seed.travelDetails()));}
+            });
+            if(hours!=null&&!result.equals(seed))result=hours.verifyOption(result);
+            if(result==null){failureReasons.put(profile,"일반 방문 장소를 확보하지 못했습니다.");return null;}
+        }
         var issues=ExtraRequestRules.violations(result);
         if(!issues.isEmpty()){failureReasons.put(profile,String.join(" ",issues));log.info("여행 유형 검증 탈락: 추가 요청 미충족={}",issues);return null;}
         try {if (scheduleMeals) { DraftMealPlanner.require(result); DraftVisitPlanner.require(result, profile); }DraftOptionComposer.requireCoverage(result);TravelSchedule.validateDraft(result);failureReasons.remove(profile);return result;}
@@ -473,46 +537,31 @@ public class TripGenerationService {
     }
 
     private TripDraft generateMeasured(GenerateRequest req, KakaoLocalClient lookups, Map<Integer,List<PlaceDraft>> candidatePool) {
-        String feedback = null;
-        AiItinerary lastCandidate = null;
-        for (int attempt = 0; attempt < 2; attempt++) {
-            try {
-                TripDraft generated = generateOnce(req, feedback, lookups, candidatePool);
-                var issues = ExtraRequestRules.violations(generated);
-                if (!issues.isEmpty()) throw new InvalidItinerary(String.join("; ", issues));
-                return generated;
-            }
-            catch (InvalidItinerary e) {
-                feedback = e.getMessage(); if (e.candidate != null) lastCandidate = e.candidate;
-                log.info("AI 결과 보완 필요: 시도={} 이유={}",attempt+1,feedback);
-                if(attempt==0 && openAi.enabled()) {
-                    long repairStarted=System.nanoTime();
-                    try {
-                        // Reuse the first response and the same request-local map cache before paying/waiting for another AI call.
-                        var repaired=new ConfirmedItineraryFallback(lookups,pool).generate(req,lastCandidate,true,candidatePool);
-                        ExtraRequestRules.require(repaired);
-                        DraftOptionComposer.requireCoverage(repaired);
-                        TravelSchedule.validateDraft(repaired);
-                        if(repaired.days().size()!=req.days() || repaired.days().stream().anyMatch(day -> day.places().stream().noneMatch(p -> p.fixedEventId()==null)))
-                            throw new IllegalArgumentException("일부 날짜의 방문 장소 부족");
-                        log.info("AI 재요청 생략: 첫 응답 서버 보완 성공");
-                        return repaired;
-                    } catch(ApiException | IllegalArgumentException repairFailure) {
-                        log.info("AI 재요청 필요: 서버 보완 미완료 이유={}",repairFailure.getMessage());
-                    } finally {logStage("AI재요청전서버보완",repairStarted);}
-                }
-            }
-            catch (ApiException e) {
-                if (!Set.of("AI_CONSTRAINTS", "AI_FAILED").contains(e.getCode())) throw e;
-                feedback = e.getMessage(); break;
-            }
-            if (!openAi.enabled()) break;
+        AiItinerary lastCandidate=null;
+        try {
+            TripDraft generated=generateOnce(req,null,lookups,candidatePool);
+            var issues=ExtraRequestRules.violations(generated);
+            if(!issues.isEmpty())throw new InvalidItinerary(String.join("; ",issues));
+            return generated;
+        } catch(InvalidItinerary e) {
+            lastCandidate=e.candidate;
+            log.info("AI 결과 보완 필요: 시도=1 이유={}",e.getMessage());
+        } catch(ApiException e) {
+            if(!Set.of("AI_CONSTRAINTS","AI_FAILED").contains(e.getCode()))throw e;
+            log.info("AI 결과 보완 필요: 시도=1 이유={}",e.getMessage());
         }
-        long recoveryStarted = System.nanoTime();
-        TripDraft recovered;
-        try { recovered = new ConfirmedItineraryFallback(lookups, pool).generate(req, lastCandidate, openAi.enabled(), candidatePool); }
-        finally { log.info("일정 생성 단계=대체후보구성 소요={}ms", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - recoveryStarted)); }
-        return ExtraRequestRules.require(recovered);
+        long recoveryStarted=System.nanoTime();
+        try {
+            TripDraft recovered=new ConfirmedItineraryFallback(lookups,pool).generate(req,lastCandidate,openAi.enabled(),candidatePool);
+            try {
+                ExtraRequestRules.require(recovered);
+                log.info("AI 초안 보완 결과: 결과=성공 AI재요청=없음");
+                return recovered;
+            } catch(ApiException | IllegalArgumentException failure) {
+                log.info("AI 초안 보완 결과: 결과=가능한 초안 반환 AI재요청=없음 이유={}",failure.getMessage());
+                return BestEffortDrafts.create(req,recovered,ApiException.badRequest(failure.getMessage()));
+            }
+        } finally {logStage("초안1회보완",recoveryStarted);}
     }
 
     private static class InvalidItinerary extends RuntimeException {

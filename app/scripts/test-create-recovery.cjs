@@ -36,5 +36,6 @@ function reset() { states = [{}, '', '부산', '2026-12-01', '2026-12-02', [], '
   saveFails = false; await submit(); assert.equal(generated, 1); assert.equal(saved, 2); assert.equal(navigated, '/draft/room');
   reset(); saveFails = true; await submit(); states[6] = '새 요청'; saveFails = false; await submit();
   assert.equal(generated, 2, 'Changed requests must generate a new draft');
-  console.log('Create recovery passed: visible web failures, retry, save-only retry, changed-input invalidation.');
+  reset(); const header=nodes(render()).find(n=>n.props?.title==='새 여행 만들기'); assert(header.props.right); header.props.right.props.onPress(); assert.equal(navigated,'/','Home shortcut exits the wizard directly');
+  console.log('Create recovery passed: visible web failures, retry, save-only retry, changed-input invalidation and home shortcut.');
 })().catch(e => { console.error(e); process.exitCode = 1; });

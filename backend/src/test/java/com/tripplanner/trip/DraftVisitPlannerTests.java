@@ -15,6 +15,8 @@ class DraftVisitPlannerTests {
         var base=new TripDraft("여행","부산",null,null,null,List.of("맛집","쇼핑","체험","카페"),List.of(new DayDraft(1,null,first),new DayDraft(2,null,second)),"AI",List.of(),"다이소는 제외해줘",details);
         var result=DraftVisitPlanner.fit(base,Map.of(),1,(day,p)->!"카페".equals(p.category())||(TravelSchedule.minute(p.visitTime())>=13*60&&TravelSchedule.minute(p.visitTime())<=17*60),(a,b)->20);
         DraftVisitPlanner.require(result,1);DraftMealPlanner.require(result);DraftOptionComposer.requireCoverage(result);TravelSchedule.validateDraft(result);
+        var finalCleaned=DraftVisitPlanner.trimExcess(base,1,(day,p)->!"카페".equals(p.category())||(TravelSchedule.minute(p.visitTime())>=13*60&&TravelSchedule.minute(p.visitTime())<=17*60),(a,b)->20);
+        DraftVisitPlanner.require(finalCleaned,1);DraftMealPlanner.require(finalCleaned);DraftOptionComposer.requireCoverage(finalCleaned);TravelSchedule.validateDraft(finalCleaned);
         assertTrue(result.days().get(0).places().stream().anyMatch(p->"cafe".equals(p.placeId())));
         assertFalse(result.days().get(1).places().stream().anyMatch(p->"cafe".equals(p.placeId())));
     }
@@ -227,5 +229,46 @@ class DraftVisitPlannerTests {
 
     private static PlaceDraft place(String id, String name, String category, String time) {
         return new PlaceDraft(id, name, "부산", 35.16, 129.16, time, "", "", category, true, null, null);
+    }
+
+    @Test void finalCountCleanupKeepsMealsStylesAndVerifiedTimes() {
+        var base=day(meal("김밥","아침","08:30"),place("shop1","상점1","쇼핑","10:15"),meal("칼국수","점심","12:00"),
+            place("cafe","카페","카페","13:30"),place("shop2","상점2","쇼핑","15:00"),meal("삼겹살","저녁","18:00"));
+        base=withStyles(base,List.of("맛집","쇼핑"));
+        var result=DraftVisitPlanner.trimExcess(base,1);
+        DraftVisitPlanner.require(result,1);DraftMealPlanner.require(result);DraftOptionComposer.requireCoverage(result);TravelSchedule.validateDraft(result);
+        assertEquals(2,result.days().get(0).places().stream().filter(DraftVisitPlanner::counted).count());
+        var kept=result.days().get(0).places();
+        assertTrue(kept.stream().allMatch(base.days().get(0).places()::contains),"Cleanup must not introduce a new venue, time or duration");
+        assertEquals(3,kept.stream().filter(p->"식당".equals(p.category())).count());
+    }
+    @Test void finalCleanupCannotDiscardARequiredStyleJustToPassTheCount() {
+        var base=withStyles(day(place("shop","상점","쇼핑","10:00"),place("cafe","카페","카페","13:00"),place("exp","체험","체험","16:00")),List.of("쇼핑","카페","체험"));
+        var result=DraftVisitPlanner.trimExcess(base,1);
+        assertEquals(base.days(),result.days());
+        assertThrows(RuntimeException.class,()->DraftVisitPlanner.require(result,1));
+    }
+
+    @Test void unreachableInsertionDoesNotSpendAnOpeningHoursLookup() {
+        var base=day(place("meal","점심","식당","12:00"),place("shop","상점","쇼핑","16:00"));
+        var candidate=place("far","먼 공원","자연","13:30");
+        var checks=new java.util.concurrent.atomic.AtomicInteger();
+        var result=DraftVisitPlanner.insert(base,base.days().get(0),candidate,(d,p)->{checks.incrementAndGet();return true;},(a,b)->300);
+        assertNull(result);
+        assertEquals(0,checks.get(),"An unreachable time slot must be rejected before querying opening hours");
+    }
+
+    @Test void missingDinnerDoesNotLockInTheExtraVisitThatPreventsItsRepair() {
+        var first=new DayDraft(1,null,List.of(place("c1","카페","카페","10:15"),meal("추어탕","점심","12:00"),place("s1","상점","쇼핑","13:30"),place("n1","공원","자연","15:00"),place("e1","체험1","체험","16:30")));
+        var second=new DayDraft(2,null,List.of(meal("김밥","아침","08:30"),place("e2","체험2","체험","10:15"),meal("칼국수","점심","12:00"),place("s2","상점2","쇼핑","13:30"),place("n2","공원2","자연","15:00"),meal("삼겹살","저녁","18:00")));
+        var details=new TravelDetails(MovementMode.CAR,List.of(),new Transport(TransportMode.CAR,"도착","09:30","출발","20:00"));
+        var events=TravelSchedule.events(details,2);
+        var days=List.of(first,second).stream().map(day->{var visits=new ArrayList<>(day.places());events.stream().filter(e->e.day()==day.dayNumber()).map(TravelSchedule.Event::place).forEach(visits::add);visits.sort(Comparator.comparing(PlaceDraft::visitTime));return new DayDraft(day.dayNumber(),day.date(),visits);}).toList();
+        var base=new TripDraft("여행","부산",null,null,null,List.of("맛집","쇼핑","체험","카페"),days,"AI",List.of(),null,details);
+        var fitted=DraftVisitPlanner.fit(base,Map.of(),0,(d,p)->true,(a,b)->20);
+        assertEquals(3,fitted.days().get(0).places().stream().filter(DraftVisitPlanner::counted).count(),"The optional fourth visit must be removable before meal repair");
+        assertThrows(RuntimeException.class,()->DraftMealPlanner.require(fitted),"A missing dinner must still fail the final meal check");
+        var repaired=DraftMealPlanner.plan(fitted,Map.of(),List.of(meal("닭갈비","저녁","18:00")),(d,p)->true,0);
+        DraftMealPlanner.require(repaired);DraftVisitPlanner.require(repaired,0);DraftOptionComposer.requireCoverage(repaired);TravelSchedule.validateDraft(repaired);
     }
 }

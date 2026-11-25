@@ -19,6 +19,31 @@ public class TrainStationRecommendationService {
     private final TrainTimetableClient trains;
     private final String key;
     private final RestClient http;
+    // KORAIL official timetable effective 2026-11-01: 88 unique stations, including KTX-Eum.
+    // https://www.korail.com/file/cubedata/COMMON/jfile/202610/13/202610131a130b1ac0b200.xlsx
+    private static final List<String> CATALOG=List.of("가남","감곡장호원","강릉","경산","경주","계룡","곡성","공주","광명","광주송정","구례구","구포","기장","김제","김천구미","나주","남원","남창","논산","단양","대전","덕소","동대구","동탄","동해","둔내","마산","만종","목포","묵호","문경","물금","밀양","부발","부산","부전","북울산","살미","삼척","상봉","서대구","서대전","서울","서원주","센텀","수서","수안보온천","수원","순천","신해운대","안동","앙성온천","양평","여수엑스포","여천","연풍","영덕","영등포","영주","영천","오송","용산","울산","울진","원주","의성","익산","장성","전주","정동진","정읍","제천","진부(오대산)","진영","진주","창원","창원중앙","천안아산","청량리","충주","태화강","판교(경기)","평창","평택지제","포항","풍기","행신","횡성");
+    private final Map<String,SelectedPlace> catalogLocations=new java.util.concurrent.ConcurrentHashMap<>();
+    public List<String> stationCatalog() { return CATALOG; }
+    public SelectedPlace catalogLocation(String name) {
+        if(!CATALOG.contains(name)) throw ApiException.badRequest("KTX역 목록에서 역을 선택해 주세요.");
+        var existing=catalogLocations.get(name); if(existing!=null)return existing;
+        if(key==null || key.isBlank()) throw ApiException.badRequest("역 위치 조회를 사용할 수 없어요. 잠시 후 다시 선택해 주세요.");
+        try {
+            String query=name.equals("판교(경기)")?"경기 판교역":catalogKey(name)+"역";
+            var uri=UriComponentsBuilder.fromUriString("https://dapi.kakao.com/v2/local/search/keyword.json").queryParam("query",query).queryParam("size",15).build().encode().toUri();
+            var data=http.get().uri(uri).header("Authorization","KakaoAK "+key).retrieve().body(JsonNode.class);
+            if(data!=null) for(var row:data.path("documents")) {
+                String label=row.path("place_name").asText(),category=row.path("category_name").asText();
+                if(!catalogKey(label).equals(catalogKey(name)) || name.equals("판교(경기)") && !row.path("address_name").asText().startsWith("경기")
+                    || label.contains("출구") || category.contains("지하철") || category.contains("폐역")
+                    || !(highSpeedStation(label,category) || category.contains("기차역"))) continue;
+                var place=new SelectedPlace(row.path("id").asText(),label,row.path("address_name").asText(),Double.valueOf(row.path("y").asText()),Double.valueOf(row.path("x").asText()),null);
+                check(place); catalogLocations.put(name,place); return place;
+            }
+        } catch(RuntimeException ignored) { /* Hide credential-bearing upstream errors. */ }
+        throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,"STATION_LOCATION_UNAVAILABLE","선택한 KTX역 위치를 확인하지 못했어요. 잠시 후 다시 선택해 주세요.");
+    }
+    static String catalogKey(String name) { return name.trim().split("\\s+")[0].replace("김천(구미)","김천구미").replaceAll("\\([^)]*\\)","").replaceAll("역$",""); }
     @org.springframework.beans.factory.annotation.Autowired
     public TrainStationRecommendationService(TrainTimetableClient trains,@Value("${app.routing.kakao-map-key:}") String key) {
         this(trains,key,client());
