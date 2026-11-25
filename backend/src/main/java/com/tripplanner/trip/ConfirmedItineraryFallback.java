@@ -85,7 +85,7 @@ final class ConfirmedItineraryFallback {
             // Round-robin prevents the first search query from crowding out other styles.
             for (int rank = 0; rank < 15; rank++) for (Seed seed : dailySeeds.get(n - 1)) {
                 List<PlaceHit> result = hits.getOrDefault(seed.query(), List.of()).stream()
-                        .filter(h -> valid(h, seed.place(), request.destination()) && ExtraRequestRules.allows(input.request(), h.name(), seed.place().category())
+                        .filter(h -> valid(h, seed.place(), request.destination()) && ExtraRequestRules.allows(input.request(), h.name(), seed.place().category(),h.placeId())
                             && ExtraRequestRules.allowsMealHit(input.request(),currentDay,request.days(),seed.place().name(),seed.place().category(),seed.place().reason()+" "+seed.place().searchQuery(),h.name(),h.categoryName())).toList();
                 if (rank >= result.size()) continue;
                 PlaceHit h = result.get(rank);
@@ -95,9 +95,9 @@ final class ConfirmedItineraryFallback {
                         || known.containsKey(h.placeId()) || recommendations.values().stream().anyMatch(p -> ItineraryRules.nameKey(p.name(), request.destination()).equals(name))) continue;
                 List<ExtraRequestRules.Visit> counted=new ArrayList<>();
                 for(DayDraft previousDay:days) for(PlaceDraft previous:previousDay.places()) if(previous.fixedEventId()==null)
-                    counted.add(new ExtraRequestRules.Visit(previousDay.dayNumber(),previous.name(),previous.category(),previous.categoryPath()));
-                for(PlaceDraft current:known.values()) counted.add(new ExtraRequestRules.Visit(n,current.name(),current.category(),current.categoryPath()));
-                if(!ExtraRequestRules.allowsAdditional(input.request(),new ExtraRequestRules.Visit(n,h.name(),seed.place().category(),h.categoryName()),request.days(),counted)) continue;
+                    counted.add(new ExtraRequestRules.Visit(previousDay.dayNumber(),previous.name(),previous.category(),previous.categoryPath(),previous.placeId()));
+                for(PlaceDraft current:known.values()) counted.add(new ExtraRequestRules.Visit(n,current.name(),current.category(),current.categoryPath(),current.placeId()));
+                if(!ExtraRequestRules.allowsAdditional(input.request(),new ExtraRequestRules.Visit(n,h.name(),seed.place().category(),h.categoryName(),h.placeId()),request.days(),counted)) continue;
                 var p = seed.place();
                 String time = p.visitTime() == null ? "10:00" : p.visitTime();
                 var confirmed = ExtraRequestRules.annotateMeal(new PlaceDraft(h.placeId(), h.name(), h.address(), h.lat(), h.lng(), time,
@@ -152,11 +152,11 @@ final class ConfirmedItineraryFallback {
     private static AiPlace theme(String style, String destination) {
         String category = switch (style) {
             case "맛집" -> "식당"; case "쇼핑" -> "쇼핑"; case "자연", "힐링" -> "자연";
-            case "문화" -> "문화"; case "카페" -> "카페"; case "액티비티" -> "체험"; default -> "관광";
+            case "문화" -> "문화"; case "카페" -> "카페"; case "체험" -> "체험"; default -> "관광";
         };
         String term = switch (style) {
             case "맛집" -> "맛집"; case "자연", "힐링" -> "공원"; case "문화" -> "박물관";
-            case "액티비티" -> "체험"; case "관광" -> "관광명소"; default -> style;
+            case "체험" -> "체험"; case "관광" -> "관광명소"; default -> style;
         };
         return new AiPlace(destination + " " + term, destination + " " + term, style.equals("야경") ? "19:00" : "10:00", category,
                 "카카오 검색 대체 후보", "", ItineraryRules.STYLES.contains(style) ? List.of(style) : List.of());

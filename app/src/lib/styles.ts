@@ -1,4 +1,4 @@
-import { StyleSheet } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 
 // 기존 프로토타입 디자인(파란 톤 카드 UI)을 그대로 유지한 공용 스타일
 export const C = {
@@ -17,8 +17,8 @@ export const C = {
 export const DAY_COLORS = ['#4169E1', '#E8743B', '#19A979', '#945ECF', '#ED4A7B', '#13A4B4', '#BF8B00'];
 
 export const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg }, content: { padding: 20, paddingBottom: 36 },
-  header: { height: 56, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.bg },
+  safe: { flex: 1, backgroundColor: C.bg }, content: { padding: 20, paddingHorizontal: Platform.OS === 'web' ? 24 : 20, paddingBottom: 36 },
+  header: { height: 56, paddingHorizontal: Platform.OS === 'web' ? 22 : 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.bg },
   back: { width: 42, height: 42, borderRadius: 14, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }, backText: { fontSize: 32, color: C.text, marginTop: -5 },
   logo: { width: 38, height: 38, borderRadius: 13, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }, logoText: { color: '#fff', fontWeight: '900', fontSize: 20 }, headerTitle: { fontSize: 17, fontWeight: '800', color: C.text },
   welcome: { backgroundColor: C.primaryDark, borderRadius: 26, padding: 24, marginTop: 12, marginBottom: 18 }, eyebrowLight: { color: '#C9D5FF', fontSize: 12, fontWeight: '700', marginBottom: 10 }, welcomeTitle: { color: '#fff', fontSize: 30, lineHeight: 38, fontWeight: '900' }, welcomeSub: { color: '#DCE4FF', fontSize: 14, lineHeight: 21, marginTop: 10 },

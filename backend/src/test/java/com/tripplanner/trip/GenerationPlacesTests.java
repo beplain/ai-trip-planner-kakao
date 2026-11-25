@@ -41,4 +41,29 @@ class GenerationPlacesTests {
             new GenerationPlaces(delegate).search("식당",null,15); assertEquals(3,searches.get());
         } finally { pool.shutdownNow(); }
     }
+    @Test void oneRequestReusesProviderQueriesAcrossMealAliasesAndPageSizes() {
+        var terms = new ArrayList<String>();
+        var sizes = new ArrayList<Integer>();
+        var delegate = new KakaoLocalClient(null, null) {
+            @Override public List<PlaceHit> search(String q, Area a, int size) {
+                terms.add(q); sizes.add(size);
+                var hits = new ArrayList<PlaceHit>();
+                for (int i = 0; i < size; i++) hits.add(new PlaceHit(q + i, q, "부산", 35., 129., null, null, "음식점", 0));
+                return hits;
+            }
+            @Override public Optional<Area> resolveArea(String d) { terms.add("area:" + d); return Optional.of(new Area(35, 129, d)); }
+        };
+        var shared = new GenerationPlaces(delegate, Map.of(), "부산");
+        assertEquals(8, shared.search("부산 삼겹살", null, 8).size());
+        var expanded = shared.withExpansions(ExtraRequestRules.mealSearches("마지막 날 저녁식사는 삼겹살로 추천해줘", "부산", 2));
+        int expandedCount = expanded.search("부산 삼겹살", null, 15).size();
+        assertTrue(expandedCount >= 15);
+        assertEquals(List.of(8, 15), sizes.subList(0, 2));
+        assertTrue(terms.contains("부산 삼겹살 맛집"));
+        int afterExpansion = terms.size();
+        assertEquals(expandedCount, expanded.search("부산 삼겹살", null, 8).size());
+        assertEquals(afterExpansion, terms.size());
+        shared.resolveArea("부산"); expanded.resolveArea("부산");
+        assertEquals(1, terms.stream().filter(term -> term.startsWith("area:")).count());
+    }
 }

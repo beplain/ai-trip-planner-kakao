@@ -61,6 +61,7 @@ export function apiError(error: unknown): string {
         : '연결하지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.';
     }
     if (error.response.status === 401) return '로그인이 만료되었습니다. 다시 로그인해 주세요.';
+    if (error.response.status === 504) return '서버에서 응답을 기다리는 시간이 초과됐어요. 잠시 후 다시 시도해 주세요.';
     if (typeof data === 'string' && data.trim().startsWith('<')) {
       return '지금은 서비스를 이용하기 어려워요. 잠시 후 다시 시도해 주세요.';
     }

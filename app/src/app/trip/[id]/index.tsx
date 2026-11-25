@@ -1,14 +1,21 @@
+import { UndoNotice, type UndoNoticeValue } from '@/components/undo-notice';
+import { DeletedPlaces } from '@/components/deleted-places';
+import { useScreenAlert } from '@/components/use-screen-alert';
 import { ItineraryDay } from '@/components/itinerary-day';
 import { TransportDeparture, TransportReturnArrival } from '@/components/transport-departure';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, Pressable, RefreshControl, ScrollView, Share, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, RefreshControl, ScrollView, Share, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { apiError, isConflict } from '../../../../services/api';
 import { tripsApi, type Place, type Trip } from '../../../../services/trips';
+import { draftsApi } from '../../../../services/drafts';
+import { useDraftEdit } from '@/hooks/use-draft-edit';
+import { DraftEditNotice } from '@/components/draft-edit-notice';
 import { MemoModal } from '@/components/memo-modal';
 import { DraggablePlaces } from '@/components/draggable-places';
+import { itineraryRecommendations } from '@/lib/place-blurb';
 import { TravelDetailsSummary } from '@/components/travel-details-input';
 import { TripActions } from '@/components/trip-actions';
 import { useDragScroll } from '@/hooks/use-drag-scroll';
@@ -26,6 +33,7 @@ export default function TripDetailRoute() {
 }
 
 function TripDetailScreen() {
+  const { alert, dialog } = useScreenAlert();
   const { user } = useAuth();
   const { attach, dragging, onScroll, onContentSizeChange, controller: dragScroll } = useDragScroll();
   const refreshingRef = useRef(false);
@@ -33,6 +41,7 @@ function TripDetailScreen() {
   const memoVersion = useRef<number | null>(null);
   const { id } = useLocalSearchParams<{ id: string }>();
   const tripId = Number(id);
+  const editor = useDraftEdit(`trip:${id}`);
   const [trip, setTrip] = useState<Trip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -41,6 +50,7 @@ function TripDetailScreen() {
   const [memo, setMemo] = useState<Place | null>(null);
   const busyRef = useRef(false);
   const versionRef = useRef<number | null>(null);
+  const [undoNotice, setUndoNotice] = useState<UndoNoticeValue | null>(null);
 
   const apply = useCallback((t: Trip) => {
     if (versionRef.current != null && t.version < versionRef.current) return;
@@ -91,10 +101,10 @@ function TripDetailScreen() {
       setNotice('변경 내용을 저장했어요.');
     } catch (e) {
       if (isConflict(e)) {
-        Alert.alert('일정이 변경되었어요', apiError(e));
+        alert('일정이 변경되었어요', apiError(e));
         await load();
       } else {
-        Alert.alert('요청 실패', apiError(e));
+        alert('요청 실패', apiError(e));
       }
     } finally {
       busyRef.current = false; setBusy(false);
@@ -109,14 +119,14 @@ function TripDetailScreen() {
   }
 
   function removePlace(p: Place) {
-    Alert.alert('장소 삭제', `'${p.name}'을(를) 일정에서 뺄까요?`, [
+    alert('장소 삭제', `'${p.name}'을(를) 일정에서 뺄까요?`, [
       { text: '취소', style: 'cancel' },
       { text: '삭제', style: 'destructive', onPress: () => { void mutate((v) => tripsApi.deletePlace(tripId, p.id!, v)); } },
     ]);
   }
 
   function deleteTrip() {
-    Alert.alert('여행 삭제', '이 여행을 삭제할까요? 동행자에게서도 사라집니다.', [
+    alert('여행 삭제', '이 여행을 휴지통으로 옮길까요? 동행자에게도 표시되지 않으며, 만든 사람이 30일 안에 복원할 수 있습니다.', [
       { text: '취소', style: 'cancel' },
       {
         text: '삭제', style: 'destructive', onPress: async () => {
@@ -126,7 +136,7 @@ function TripDetailScreen() {
             await tripsApi.remove(tripId);
             router.replace('/');
           } catch (e) {
-            Alert.alert('삭제 실패', apiError(e));
+            alert('삭제 실패', apiError(e));
           } finally {
             busyRef.current = false; setBusy(false);
           }
@@ -144,7 +154,8 @@ function TripDetailScreen() {
 
   if (!trip) {
     return (
-      <SafeAreaView style={s.safe}>
+      <SafeAreaView style={s.safe}>{dialog}
+      <UndoNotice notice={undoNotice} onDismiss={() => setUndoNotice(null)} />
         <ScreenHeader title="여행 일정" />
         <View style={s.center}>
           {error ? (
@@ -159,12 +170,15 @@ function TripDetailScreen() {
     );
   }
 
-  const canEdit = trip.myRole !== 'VIEWER';
+  const canEdit = false;
   const isOwner = trip.myRole === 'OWNER';
   const companions = trip.members.filter((member) => member.role !== 'OWNER');
 
+  const blurbs = itineraryRecommendations(trip.days);
+
   return (
-    <SafeAreaView style={s.safe}>
+    <SafeAreaView style={s.safe}>{dialog}
+      <UndoNotice notice={undoNotice} onDismiss={() => setUndoNotice(null)} />
       <ScreenHeader title="여행 일정" right={busy ? <ActivityIndicator color={C.primary} /> : undefined} />
       <ScrollView ref={attach} scrollEnabled={!dragging} onScroll={onScroll} scrollEventThrottle={16} onContentSizeChange={onContentSizeChange} contentContainerStyle={s.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         <View style={s.detailHero}>
@@ -180,18 +194,22 @@ function TripDetailScreen() {
             <Text style={s.infoText}>{notice}</Text>
           </Pressable>
         )}
-        <TravelDetailsSummary value={trip.travelDetails} />
+        <TravelDetailsSummary value={trip.travelDetails} compact />
+        <DraftEditNotice editingKey={editor.active&&!editor.mine?`${id}:${editor.editorId}`:undefined} editorName={editor.editorName} message={editor.message} blocked={editor.blocked} onRetry={editor.refresh}/>
+        {trip.myRole!=='VIEWER'&&<>
+          <Pressable disabled={busy||editor.blocked} style={[s.primary,(busy||editor.blocked)&&s.disabled]} onPress={()=>router.push(`/trip/${id}/edit`)}><Text style={s.primaryText}>일정 수정</Text></Pressable>
+          <Pressable disabled={busy||editor.blocked} style={s.outlineButton} onPress={()=>alert('새 초안으로 다시 계획할까요?','기존 확정 일정은 보존됩니다. 복사한 초안에서 여행 조건을 변경할 수 있습니다.',[
+            {text:'취소',style:'cancel'}, {text:'새 초안 만들기',onPress:()=>{if(busyRef.current)return;busyRef.current=true;setBusy(true);void draftsApi.create({title:trip.title,destination:trip.destination,startDate:trip.startDate,endDate:trip.endDate,budget:trip.budget,styles:trip.styles,travelDetails:trip.travelDetails,days:trip.days,source:'CONFIRMED_COPY',warnings:[]}).then(room=>router.replace(`/draft/${room.id}`)).catch(e=>alert('초안을 만들지 못했어요',apiError(e))).finally(()=>{busyRef.current=false;setBusy(false);});}},
+          ])}><Text style={s.outlineText}>새 초안으로 다시 계획하기</Text></Pressable>
+        </>}
         <TripActions disabled={busy || refreshing || dragging}
           onMap={() => router.push(`/trip/${trip.id}/map`)}
           onShare={() => { void Share.share({ message: shareText(trip) }).catch(() => undefined); }}
-          onInvite={() => isOwner ? router.push(`/trip/${trip.id}/invite`) : Alert.alert('초대 권한 없음', '초대는 여행을 만든 사람만 할 수 있어요.')} />
-        <Pressable accessibilityRole="button" disabled={busy || refreshing || dragging || !!memo} style={[s.outlineButton, { marginTop: 0 }, (busy || refreshing || dragging) && s.disabled]} onPress={() => { void onRefresh(); }}>
-          <Text style={s.outlineText}>{refreshing ? '동기화 중…' : '↻ 지금 동기화'}</Text>
-        </Pressable>
+          onInvite={() => isOwner ? router.push(`/trip/${trip.id}/invite`) : alert('초대 권한 없음', '초대는 여행을 만든 사람만 할 수 있어요.')} />
         {!!error && <Text style={s.warnText}>{error}</Text>}
         <View style={s.sectionHead}>
           <Text style={s.sectionTitle}>일정</Text>
-          <Text style={s.sectionHint}>{canEdit ? '길게 눌러 이동 · 10초마다 동기화' : '보기 전용'}</Text>
+          <Text style={s.sectionHint}>{trip.myRole!=='VIEWER' ? '일정 수정 버튼으로 편집 · 10초마다 동기화' : '보기 전용'}</Text>
         </View>
 
         {trip.days.map((day, dayIdx) => {
@@ -201,7 +219,7 @@ function TripDetailScreen() {
               title={`DAY ${day.dayNumber}${day.date ? ` · ${shortDate(day.date)}` : ''}`}
               color={color} disabled={dragging || busy || refreshing}>
               <TransportDeparture value={trip.travelDetails} dayNumber={day.dayNumber} color={color} />
-              <DraggablePlaces visitDate={day.date} places={day.places} color={color} editable={canEdit} busy={busy || refreshing} scroll={dragScroll}
+              <DraggablePlaces blurbs={blurbs} visitDate={day.date} places={day.places} color={color} editable={canEdit} busy={busy || refreshing} scroll={dragScroll}
                 onReorder={(from, to) => reorder(dayIdx, from, to)} onDelete={removePlace}
                 onEditMemo={(p) => { memoRef.current = true; memoVersion.current = trip.version; setMemo(p); }} />
               <TransportReturnArrival value={trip.travelDetails} dayNumber={day.dayNumber} dayCount={trip.days.length} color={color} />
@@ -209,6 +227,7 @@ function TripDetailScreen() {
           );
         })}
 
+        <DeletedPlaces kind="trips" id={trip.id} version={trip.version} editable={trip.myRole!=='VIEWER' && !editor.blocked && !busy && !refreshing} onRestored={(value) => apply(value as Trip)} onRefresh={load} onUndoChange={setUndoNotice} />
         <View style={[s.memberBox, { marginTop: 14 }]}>
           <Text style={s.sectionTitleSmall}>함께 가는 동행자 ({companions.length})</Text>
           {companions.length === 0 && <Text style={s.mutedSmall}>아직 참여한 동행자가 없어요.</Text>}

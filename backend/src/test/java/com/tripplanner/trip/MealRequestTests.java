@@ -92,13 +92,13 @@ class MealRequestTests {
         var maps=new Maps(){ @Override public List<PlaceHit> search(String q,Area a,int size){ return super.search(q,a,size).stream().filter(h->!h.placeId().equals("pork")).toList(); }};
         var service=new TripGenerationService(new TripGenerationRulesTests.FakeAi(ai()),new SampleItineraryGenerator(),maps);
         try {
-            var failure=assertThrows(ApiException.class,()->service.generate(new GenerateRequest("부산",null,2,null,List.of("쇼핑"),REQUEST,new TravelDetails(MovementMode.CAR,List.of(),null))));
-            assertTrue(failure.getMessage().contains("삼겹살"));
-            assertFalse(failure.getMessage().contains("구체적으로"));
+            var partial=service.generate(new GenerateRequest("부산",null,2,null,List.of("쇼핑"),REQUEST,new TravelDetails(MovementMode.CAR,List.of(),null)));
+            assertEquals("BEST_EFFORT",partial.source());
+            assertFalse(partial.warnings().isEmpty());
         } finally {service.shutdown();}
         var details=new TravelDetails(MovementMode.CAR,List.of(),new Transport(TransportMode.KTX,"부산역","10:00","부산역","16:00"));
         var service2=new TripGenerationService(new TripGenerationRulesTests.FakeAi(ai()),new SampleItineraryGenerator(),new Maps());
-        try { assertThrows(ApiException.class,()->service2.generate(new GenerateRequest("부산",null,2,null,List.of("쇼핑"),REQUEST,details))); }
+        try { assertEquals("BEST_EFFORT",service2.generate(new GenerateRequest("부산",null,2,null,List.of("쇼핑"),REQUEST,details)).source()); }
         finally {service2.shutdown();}
     }
     @Test void porkRestaurantsRemainCandidatesWithoutLiteralSamgyeopsalInBusinessName() {

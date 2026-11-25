@@ -13,6 +13,10 @@ public record AiItinerary(String title, List<AiDay> days) {
      */
     public record AiPlace(String name, String searchQuery, String visitTime, String category, String reason,
                           String note, List<String> matchedStyles) {
+        public AiPlace {
+            category = StyleNames.canonical(category);
+            matchedStyles = StyleNames.canonical(matchedStyles);
+        }
         public AiPlace(String name, String searchQuery, String visitTime, String category, String reason, String note) {
             this(name, searchQuery, visitTime, category, reason, note, List.of());
         }

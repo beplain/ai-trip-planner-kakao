@@ -55,21 +55,29 @@ public final class TripDtos {
                             @Valid SelectedPlace originLocation, String originTime, boolean arrivalAuto, @Valid TrainOption train,
                             @Valid SelectedPlace returnArrivalLocation, @Valid TrainOption returnTrain, String returnArrivalTime, Boolean returnArrivalAuto,
                             @Valid SelectedPlace boardingStation, @Valid SelectedPlace returnBoardingStation,
-                            @Valid SelectedPlace alightingStation, @Valid SelectedPlace returnAlightingStation) {
+                            @Valid SelectedPlace alightingStation, @Valid SelectedPlace returnAlightingStation,
+                            @Valid FlightOption flight, @Valid FlightOption returnFlight) {
+        public Transport(TransportMode mode,String arrivalPlace,String arrivalTime,String departurePlace,String departureTime,
+                         SelectedPlace arrivalLocation,SelectedPlace departureLocation,SelectedPlace originLocation,String originTime,boolean arrivalAuto,TrainOption train,
+                         SelectedPlace returnArrivalLocation,TrainOption returnTrain,String returnArrivalTime,Boolean returnArrivalAuto,
+                         SelectedPlace boardingStation,SelectedPlace returnBoardingStation,SelectedPlace alightingStation,SelectedPlace returnAlightingStation) {
+            this(mode,arrivalPlace,arrivalTime,departurePlace,departureTime,arrivalLocation,departureLocation,originLocation,originTime,arrivalAuto,train,
+                returnArrivalLocation,returnTrain,returnArrivalTime,returnArrivalAuto,boardingStation,returnBoardingStation,alightingStation,returnAlightingStation,null,null);
+        }
         public Transport(TransportMode mode,String arrivalPlace,String arrivalTime,String departurePlace,String departureTime,
                          SelectedPlace arrivalLocation,SelectedPlace departureLocation,SelectedPlace originLocation,String originTime,boolean arrivalAuto,TrainOption train,
                          SelectedPlace returnArrivalLocation,TrainOption returnTrain,String returnArrivalTime,Boolean returnArrivalAuto,SelectedPlace boardingStation,SelectedPlace returnBoardingStation) {
             this(mode,arrivalPlace,arrivalTime,departurePlace,departureTime,arrivalLocation,departureLocation,originLocation,originTime,arrivalAuto,train,returnArrivalLocation,returnTrain,returnArrivalTime,returnArrivalAuto,boardingStation,returnBoardingStation,null,null);
         }
         public Transport withAlightingStations(SelectedPlace arrival,SelectedPlace returning) {
-            return new Transport(mode,arrivalPlace,arrivalTime,departurePlace,departureTime,arrivalLocation,departureLocation,originLocation,originTime,arrivalAuto,train,returnArrivalLocation,returnTrain,returnArrivalTime,returnArrivalAuto,boardingStation,returnBoardingStation,arrival,returning);
+            return new Transport(mode,arrivalPlace,arrivalTime,departurePlace,departureTime,arrivalLocation,departureLocation,originLocation,originTime,arrivalAuto,train,returnArrivalLocation,returnTrain,returnArrivalTime,returnArrivalAuto,boardingStation,returnBoardingStation,arrival,returning,flight,returnFlight);
         }
         public Transport(TransportMode mode,String arrivalPlace,String arrivalTime,String departurePlace,String departureTime,
                          SelectedPlace arrivalLocation,SelectedPlace departureLocation,SelectedPlace originLocation,String originTime,boolean arrivalAuto,TrainOption train,SelectedPlace returnArrivalLocation,TrainOption returnTrain,String returnArrivalTime,Boolean returnArrivalAuto) {
             this(mode,arrivalPlace,arrivalTime,departurePlace,departureTime,arrivalLocation,departureLocation,originLocation,originTime,arrivalAuto,train,returnArrivalLocation,returnTrain,returnArrivalTime,returnArrivalAuto,null,null);
         }
         public Transport withStations(SelectedPlace boarding,SelectedPlace returning) {
-            return new Transport(mode,arrivalPlace,arrivalTime,departurePlace,departureTime,arrivalLocation,departureLocation,originLocation,originTime,arrivalAuto,train,returnArrivalLocation,returnTrain,returnArrivalTime,returnArrivalAuto,boarding,returning,alightingStation,returnAlightingStation);
+            return new Transport(mode,arrivalPlace,arrivalTime,departurePlace,departureTime,arrivalLocation,departureLocation,originLocation,originTime,arrivalAuto,train,returnArrivalLocation,returnTrain,returnArrivalTime,returnArrivalAuto,boarding,returning,alightingStation,returnAlightingStation,flight,returnFlight);
         }
         public Transport(TransportMode mode,String arrivalPlace,String arrivalTime,String departurePlace,String departureTime,
                          SelectedPlace arrivalLocation,SelectedPlace departureLocation,SelectedPlace originLocation,String originTime,boolean arrivalAuto,TrainOption train,SelectedPlace returnArrivalLocation,TrainOption returnTrain,String returnArrivalTime) {
@@ -108,6 +116,13 @@ public final class TripDtos {
                               @NotBlank @Size(max=100) String originStation, @NotBlank @Size(max=100) String arrivalStation,
                               @NotBlank String departureTime, @NotBlank String arrivalTime) {}
     public record TrainLookupRequest(@NotNull Transport transport,@NotNull LocalDate date) {}
+    public record Airport(String id,String name,SelectedPlace location) {}
+    public record FlightOption(@NotBlank @Size(max=180) String id,@NotNull LocalDate date,
+        @NotBlank @Size(max=50) String airline,@NotBlank @Size(max=30) String flightNo,
+        @NotBlank String originAirportId,@NotBlank String arrivalAirportId,
+        @NotBlank String originAirport,@NotBlank String arrivalAirport,
+        @NotBlank String departureTime,@NotBlank String arrivalTime) {}
+    public record FlightLookupRequest(@NotNull LocalDate date,@NotBlank String originAirportId,@NotBlank String arrivalAirportId) {}
     public record StationRecommendation(SelectedPlace station,List<TrainOption> trains,int distanceMeters) {}
     public record StationCandidatesRequest(@NotNull @Valid SelectedPlace origin,@Valid SelectedPlace destination) {}
     public record TravelDetails(@NotNull MovementMode movementMode,
@@ -120,9 +135,10 @@ public final class TripDtos {
             @NotNull @Min(1) @Max(7) Integer days,
             @Size(max = 30) String budget,
             @Size(max = 8) List<@NotBlank @Size(max = 20) String> styles,
-            @Size(max = 200) String request,
+            @Size(max = 16000) String request,
             @Valid TravelDetails travelDetails
     ) {
+        public GenerateRequest { styles = com.tripplanner.ai.StyleNames.canonical(styles); }
         public GenerateRequest(String destination, LocalDate startDate, Integer days, String budget,
                                List<String> styles, String request) {
             this(destination, startDate, days, budget, styles, request, null);
@@ -145,13 +161,22 @@ public final class TripDtos {
             @Size(max = 50) String phone,
             @Size(max = 100) String fixedEventId,
             @Size(max = 500) String categoryPath,
-            @Valid com.tripplanner.place.BusinessHoursInfo businessHours
+            @Valid com.tripplanner.place.BusinessHoursInfo businessHours,
+            @Min(45) @Max(60) Integer durationMinutes
     ) {
+        public PlaceDraft { category = com.tripplanner.ai.StyleNames.canonical(category); }
+        public PlaceDraft(String placeId,String name,String address,Double latitude,Double longitude,String visitTime,String reason,String note,String category,boolean verified,String placeUrl,String phone,String fixedEventId,String categoryPath,com.tripplanner.place.BusinessHoursInfo businessHours) {
+            this(placeId,name,address,latitude,longitude,visitTime,reason,note,category,verified,placeUrl,phone,fixedEventId,categoryPath,businessHours,null);
+        }
+        public int stayMinutes() { return fixedEventId == null && Integer.valueOf(45).equals(durationMinutes) ? 45 : 60; }
+        public PlaceDraft withDurationMinutes(Integer minutes) {
+            return new PlaceDraft(placeId,name,address,latitude,longitude,visitTime,reason,note,category,verified,placeUrl,phone,fixedEventId,categoryPath,businessHours,minutes);
+        }
         public PlaceDraft(String placeId,String name,String address,Double latitude,Double longitude,String visitTime,String reason,String note,String category,boolean verified,String placeUrl,String phone,String fixedEventId,String categoryPath) {
             this(placeId,name,address,latitude,longitude,visitTime,reason,note,category,verified,placeUrl,phone,fixedEventId,categoryPath,null);
         }
         public PlaceDraft withBusinessHours(com.tripplanner.place.BusinessHoursInfo info) {
-            return new PlaceDraft(placeId,name,address,latitude,longitude,visitTime,reason,note,category,verified,placeUrl,phone,fixedEventId,categoryPath,info);
+            return new PlaceDraft(placeId,name,address,latitude,longitude,visitTime,reason,note,category,verified,placeUrl,phone,fixedEventId,categoryPath,info,durationMinutes);
         }
         public PlaceDraft(String placeId, String name, String address, Double latitude, Double longitude,
                           String visitTime, String reason, String note, String category, boolean verified,
@@ -185,12 +210,13 @@ public final class TripDtos {
             @NotEmpty @Size(max = 7) List<@Valid DayDraft> days,
             String source,
             List<String> warnings,
-            @Size(max = 200) String request,
+            @Size(max = 16000) String request,
             @Valid TravelDetails travelDetails,
             @Size(max = 3) List<@Valid StoredDraftOption> options,
             @Size(max = 30) String selectedOption,
             @Size(max = 16000) String interpretedRequest
     ) {
+        public TripDraft { styles = com.tripplanner.ai.StyleNames.canonical(styles); }
         public String effectiveRequest() { return interpretedRequest == null ? request : interpretedRequest; }
         public TripDraft withRequestMetadata(String original,String interpretation) {
             return new TripDraft(title,destination,startDate,endDate,budget,styles,days,source,warnings,original,travelDetails,options,selectedOption,interpretation);
@@ -253,8 +279,14 @@ public final class TripDtos {
     public record PlaceResponse(
             Long id, String placeId, String name, String address, Double latitude, Double longitude,
             String visitTime, String reason, String note, String category, boolean verified,
-            String placeUrl, String phone, int orderIndex, String fixedEventId, com.tripplanner.place.BusinessHoursInfo businessHours
-    ) {}
+            String placeUrl, String phone, int orderIndex, String fixedEventId, com.tripplanner.place.BusinessHoursInfo businessHours, Integer durationMinutes
+    ) {
+        public PlaceResponse(Long id, String placeId, String name, String address, Double latitude, Double longitude,
+                             String visitTime, String reason, String note, String category, boolean verified, String placeUrl,
+                             String phone, int orderIndex, String fixedEventId, com.tripplanner.place.BusinessHoursInfo businessHours) {
+            this(id,placeId,name,address,latitude,longitude,visitTime,reason,note,category,verified,placeUrl,phone,orderIndex,fixedEventId,businessHours,null);
+        }
+    }
 
     public record DayResponse(Long id, int dayNumber, LocalDate date, List<PlaceResponse> places) {}
 

@@ -9,9 +9,11 @@ import org.springframework.stereotype.Service;
 public class TransportArrivalService {
     private final RouteTimeClient routes;
     private final TrainTimetableClient trains;
+    private final FlightTimetableClient flights;
     public TransportArrivalService(RouteTimeClient routes) { this(routes,null); }
+    public TransportArrivalService(RouteTimeClient routes,TrainTimetableClient trains) { this(routes,trains,null); }
     @org.springframework.beans.factory.annotation.Autowired
-    public TransportArrivalService(RouteTimeClient routes,TrainTimetableClient trains) { this.routes = routes; this.trains=trains; }
+    public TransportArrivalService(RouteTimeClient routes,TrainTimetableClient trains,FlightTimetableClient flights) { this.routes = routes; this.trains=trains; this.flights=flights; }
     public java.util.List<TrainOption> trainOptions(Transport t,java.time.LocalDate date) {
         if(trains==null) throw ApiException.badRequest("기차 시간표 조회를 사용할 수 없어요. 승차권 시각을 직접 선택해 주세요.");
         return trains.options(t,date);
@@ -47,6 +49,16 @@ public class TransportArrivalService {
     GenerateRequest resolve(GenerateRequest r) {
         TravelDetails d = r.travelDetails();
         if (d == null || d.transport() == null) return r;
+        if(d.transport().mode()==TransportMode.PLANE) {
+            var t=d.transport();
+            if(r.startDate()==null) throw ApiException.badRequest("항공편을 이용하는 여행 날짜를 선택해 주세요.");
+            var outbound=flight(t.flight(),r.startDate(),t.originLocation(),t.arrivalLocation(),t.arrivalAuto());
+            var inbound=flight(t.returnFlight(),r.startDate().plusDays(r.days()-1),t.departureLocation(),t.returnArrivalLocation(),!Boolean.FALSE.equals(t.returnArrivalAuto()));
+            var resolved=new Transport(t.mode(),t.arrivalPlace(),outbound==null?t.arrivalTime():outbound.arrivalTime(),t.departurePlace(),inbound==null?t.departureTime():inbound.departureTime(),
+                t.arrivalLocation(),t.departureLocation(),t.originLocation(),outbound==null?t.originTime():outbound.departureTime(),t.arrivalAuto(),null,
+                t.returnArrivalLocation(),null,inbound==null?t.returnArrivalTime():inbound.arrivalTime(),t.returnArrivalAuto(),null,null,null,null,outbound,inbound);
+            return new GenerateRequest(r.destination(),r.startDate(),r.days(),r.budget(),r.styles(),r.request(),new TravelDetails(d.movementMode(),d.stays(),resolved));
+        }
         if(!d.transport().arrivalAuto() && d.transport().returnArrivalLocation()==null) return r;
         Transport resolved = d.transport().arrivalAuto() ? calculate(d.transport(),r.startDate()) : d.transport();
         if(resolved.mode()==TransportMode.KTX && resolved.returnArrivalLocation()!=null && !Boolean.FALSE.equals(resolved.returnArrivalAuto())) {
@@ -71,6 +83,19 @@ public class TransportArrivalService {
         if (p.latitude() == null || p.longitude() == null || !Double.isFinite(p.latitude()) || !Double.isFinite(p.longitude())
                 || Math.abs(p.latitude()) > 90 || Math.abs(p.longitude()) > 180 || p.placeId() == null || !p.validId())
             throw ApiException.badRequest("출발·도착 장소를 카카오맵에서 다시 선택해 주세요.");
+    }
+    private FlightOption flight(FlightOption requested,java.time.LocalDate date,SelectedPlace from,SelectedPlace to,boolean auto) {
+        if(from==null || to==null) throw ApiException.badRequest("가는 편과 오는 편의 출발·도착 공항을 모두 선택해 주세요.");
+        check(from); check(to);
+        if(from.placeId().equals(to.placeId())) throw ApiException.badRequest("출발·도착 공항을 다르게 선택해 주세요.");
+        if(!auto) return null;
+        if(requested==null || !date.equals(requested.date())) throw ApiException.badRequest("여행 날짜에 맞는 항공편을 다시 조회해 선택해 주세요.");
+        if(flights==null) throw ApiException.badRequest("항공 시간표를 사용할 수 없어요. 항공편 시각을 직접 선택해 주세요.");
+        var selected=flights.options(new FlightLookupRequest(date,requested.originAirportId(),requested.arrivalAirportId())).stream()
+            .filter(f->f.equals(requested)).findFirst().orElseThrow(()->ApiException.badRequest("선택한 항공편 정보가 변경되었어요. 시간표를 다시 조회해 주세요."));
+        if(!flights.location(selected.originAirportId()).placeId().equals(from.placeId()) || !flights.location(selected.arrivalAirportId()).placeId().equals(to.placeId()))
+            throw ApiException.badRequest("선택한 항공편과 출발·도착 공항이 달라요. 다시 조회해 주세요.");
+        return selected;
     }
     private static PlaceDraft place(SelectedPlace p) {
         return new PlaceDraft(p.placeId(),p.name(),p.address(),p.latitude(),p.longitude(),null,null,null,null,true,p.placeUrl(),null);

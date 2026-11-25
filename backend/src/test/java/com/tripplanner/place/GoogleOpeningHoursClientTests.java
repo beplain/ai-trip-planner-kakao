@@ -144,7 +144,7 @@ class GoogleOpeningHoursClientTests {
 
     private PlaceDraft sportsCenter() {
         return new PlaceDraft("1810485368","가상현실스포츠체험센터","부산 금정구 체육공원로399번길 324",
-                35.20,129.10,"12:00",null,null,"액티비티",true,null,null);
+                35.20,129.10,"12:00",null,null,"체험",true,null,null);
     }
     private String sportsResponse(String name,String address) {
         var root=json.createObjectNode();var row=root.putArray("places").addObject();

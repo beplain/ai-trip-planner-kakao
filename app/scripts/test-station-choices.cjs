@@ -30,7 +30,7 @@ const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
   assert(flat(render()).some(node => node.type === 'Spinner')); assert.equal(pending.length, 1);
   pending[0].resolve(stations); await tick();
   const radios = flat(render()).filter(node => node.props?.accessibilityRole === 'radio');
-  assert.equal(radios.length, 3); assert.equal(changes.length, 0, 'A station must be selected by the user');
+  assert.equal(radios.length, 3); assert.equal(changes.length, 1, 'The first candidate is automatically selected'); assert.equal(props.value.name,'서울역');
   radios[1].props.onPress();
   assert.equal(props.value.name, '광명역');
   assert(flat(render()).filter(node => node.props?.accessibilityRole === 'radio')[1].props.accessibilityState.checked);

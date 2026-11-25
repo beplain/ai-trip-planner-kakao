@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tripplanner.common.ApiException;
 import com.tripplanner.config.AppProperties;
 import com.tripplanner.trip.MemberRole;
+import com.tripplanner.trip.Trip;
 import com.tripplanner.trip.TripInvite;
 import com.tripplanner.trip.TripInviteRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,6 +15,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import java.lang.reflect.Proxy;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -22,6 +24,7 @@ class InviteShareControllerTests {
     private TripInvite invitation;
     private int lookups;
     private InviteShareController controller;
+    private Trip trip;
 
     private InviteShareController controller(String base) {
         var repository = (TripInviteRepository) Proxy.newProxyInstance(
@@ -39,7 +42,8 @@ class InviteShareControllerTests {
 
     @BeforeEach
     void setup() {
-        invitation = new TripInvite(null, token, MemberRole.EDITOR, null, Instant.now().plusSeconds(3600));
+        trip = new Trip(null,"여행","부산",null,null,null,List.of());
+        invitation = new TripInvite(trip, token, MemberRole.EDITOR, null, Instant.now().plusSeconds(3600));
         controller = controller("https://example.test");
     }
 
@@ -56,7 +60,7 @@ class InviteShareControllerTests {
 
     @Test
     void expiredInviteCannotBeShared() throws Exception {
-        invitation = new TripInvite(null, token, MemberRole.EDITOR, null, Instant.now().minusSeconds(1));
+        invitation = new TripInvite(trip, token, MemberRole.EDITOR, null, Instant.now().minusSeconds(1));
         var response = controller.page(token, "", new MockHttpServletRequest());
         assertEquals(HttpStatus.GONE, response.getStatusCode());
         assertFalse(response.getBody().contains("Kakao.Share"));
@@ -74,5 +78,12 @@ class InviteShareControllerTests {
         controller = controller("https://example.test/</script>");
         var body = controller.page(token, "", new MockHttpServletRequest()).getBody();
         assertTrue(body.contains("\\u003c/script\\u003e"));
+    }
+    @Test void trashedTripCannotBeShared() {
+        var deleted = new Trip(null,"여행","부산",null,null,null,List.of()) {
+            @Override public Instant getDeletedAt(){return Instant.now();}
+        };
+        invitation=new TripInvite(deleted,token,MemberRole.EDITOR,null,Instant.now().plusSeconds(3600));
+        assertThrows(ApiException.class,()->controller.page(token,"",new MockHttpServletRequest()));
     }
 }

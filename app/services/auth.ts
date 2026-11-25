@@ -4,6 +4,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
 
 import { API_BASE_URL, api } from './api';
+import { webTokenStore } from './web-token-store';
 
 export type User = { id: number; email?: string; name: string };
 type TokenResponse = { accessToken: string; expiresInSeconds: number; user: User };
@@ -11,19 +12,19 @@ type TokenResponse = { accessToken: string; expiresInSeconds: number; user: User
 const TOKEN_KEY = 'tripplanner.accessToken';
 let webMemoryToken: string | null = null; // 웹은 SecureStore 미지원 → 메모리에만 보관
 
-export const DEV_LOGIN_ENABLED = process.env.EXPO_PUBLIC_DEV_LOGIN !== 'false';
+export const DEV_LOGIN_ENABLED = __DEV__ && process.env.EXPO_PUBLIC_DEV_LOGIN === 'true';
 
 export const tokenStore = {
   async get() {
-    if (Platform.OS === 'web') return webMemoryToken;
+    if (Platform.OS === 'web') return webTokenStore.get();
     return SecureStore.getItemAsync(TOKEN_KEY);
   },
   async set(token: string) {
-    if (Platform.OS === 'web') webMemoryToken = token;
+    if (Platform.OS === 'web') await webTokenStore.set(token);
     else await SecureStore.setItemAsync(TOKEN_KEY, token);
   },
   async clear() {
-    if (Platform.OS === 'web') webMemoryToken = null;
+    if (Platform.OS === 'web') await webTokenStore.clear();
     else await SecureStore.deleteItemAsync(TOKEN_KEY);
   },
 };
@@ -53,6 +54,7 @@ export async function signInWithKakao(): Promise<TokenResponse | null> {
 
 /** 개발용 로그인 (서버 APP_DEV_LOGIN_ENABLED=true 필요) */
 export async function signInDev(name: string): Promise<TokenResponse> {
+  if (!DEV_LOGIN_ENABLED) throw new Error('개발용 로그인이 비활성화되어 있습니다.');
   return (await api.post<TokenResponse>('/api/auth/dev', { name })).data;
 }
 

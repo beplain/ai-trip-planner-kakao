@@ -8,7 +8,7 @@ import java.util.*;
 /** Shared checks before and after place lookup. Tags alone cannot override category/time constraints. */
 public final class ItineraryRules {
     private ItineraryRules() {}
-    public static final List<String> STYLES = List.of("맛집", "힐링", "자연", "쇼핑", "문화", "액티비티", "카페", "야경");
+    public static final List<String> STYLES = List.of("맛집", "힐링", "자연", "쇼핑", "문화", "체험", "카페", "야경");
     public static String nameKey(String name, String destination) {
         String key = normalize(name);
         String area = normalize(destination);
@@ -20,13 +20,13 @@ public final class ItineraryRules {
     }
     public static Set<String> stylesFor(AiPlace place) {
         Set<String> result = new HashSet<>();
-        for (String style : place.matchedStyles() == null ? List.<String>of() : place.matchedStyles()) {
+        for (String style : place.matchedStyles() == null ? List.<String>of() : StyleNames.canonical(place.matchedStyles())) {
             boolean valid = switch (style) {
                 case "맛집" -> "식당".equals(place.category());
                 case "쇼핑" -> "쇼핑".equals(place.category());
                 case "자연" -> "자연".equals(place.category());
                 case "문화" -> "문화".equals(place.category());
-                case "액티비티" -> "체험".equals(place.category());
+                case "체험" -> "체험".equals(place.category());
                 case "카페" -> "카페".equals(place.category());
                 case "힐링" -> Set.of("자연", "카페", "관광").contains(Objects.toString(place.category(), ""));
                 case "야경" -> !"식당".equals(place.category()) && time(place.visitTime()) >= 18 * 60;

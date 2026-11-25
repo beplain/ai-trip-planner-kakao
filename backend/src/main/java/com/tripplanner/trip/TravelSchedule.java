@@ -123,7 +123,7 @@ public final class TravelSchedule {
             var arrival=t.mode()==TransportMode.KTX && t.arrivalAuto() && t.train()!=null && t.alightingStation()!=null?t.alightingStation():t.arrivalLocation();
             out.add(new Event(1, "transport:arrival", kind + " 도착 · " + (arrival==null?t.arrivalPlace():arrival.name()), arrival==null?t.arrivalPlace():arrival.address(), minute(t.arrivalTime()), "도착 후 이동 준비 시간을 확보합니다.", arrival));
             out.add(new Event(days, "transport:boarding", "귀가 " + kind + " 도착 · " + departureName, returning == null ? departureName : returning.address(), minute(returnDeparture(t)) - departureBuffer(t), "출발 전 여유 시간입니다. 실제 탑승 수속·운행 정보를 확인해 주세요.", returning));
-            out.add(new Event(days, "transport:departure", "귀가 출발 · " + departureName, returning == null ? departureName : returning.address(), minute(returnDeparture(t)), t.mode()==TransportMode.KTX && t.returnTrain()!=null ? "선택한 열차 시간표의 출발 시각" : "사용자가 입력한 출발 시각", returning));
+            out.add(new Event(days, "transport:departure", "귀가 출발 · " + departureName, returning == null ? departureName : returning.address(), minute(returnDeparture(t)), t.mode()==TransportMode.PLANE && t.returnFlight()!=null ? "선택한 항공 시간표의 출발 시각" : t.mode()==TransportMode.KTX && t.returnTrain()!=null ? "선택한 열차 시간표의 출발 시각" : "사용자가 입력한 출발 시각", returning));
         }
         int index = 0;
         for (Stay s : stays(d)) {
@@ -146,8 +146,10 @@ public final class TravelSchedule {
             }
             if (s.afterCheckOut() != LuggagePlan.CARRY) {
                 boolean hotel = s.afterCheckOut() == LuggagePlan.HOTEL;
+                // Last stay of the day: retrieve bags at 20:00, after the 17:00–19:00 dinner window.
+                // An 18:00 pickup leaves dinner starting at 18:45, and the drive then misses 19:00.
                 int nextCheckIn = stays(d).stream().anyMatch(p -> p.checkInDay() == s.checkOutDay())
-                        ? checkout + (hotel ? 45 : gap(d) + 60) : 18 * 60;
+                        ? checkout + (hotel ? 45 : gap(d) + 60) : 20 * 60;
                 int pickup = Math.min(nextCheckIn, end(s.checkOutDay(), days, d) - gap(d) - 30);
                 int afterDrop = checkout + 15 + (hotel ? 0 : gap(d));
                 if (pickup < afterDrop + 30) throw ApiException.badRequest("체크아웃 후 짐 보관·회수 시간이 부족합니다. 직접 소지하거나 숙소·교통 시간을 조정해 주세요.");
@@ -166,11 +168,14 @@ public final class TravelSchedule {
         return "숙소 인근 역·터미널 보관함 (위치 확인 필요)";
     }
     public static boolean allowed(int day, int days, int visit, TravelDetails d, List<Event> events) {
+        return allowed(day, days, visit, d, events, 60);
+    }
+    public static boolean allowed(int day, int days, int visit, TravelDetails d, List<Event> events, int duration) {
         if (d == null) return true;
-        if (visit < start(day, d) || visit + 60 + gap(d) > end(day, days, d)) return false;
-        // Reserve a one-hour visit plus movement allowance around each fixed commitment.
+        if (visit < start(day, d) || visit + duration + gap(d) > end(day, days, d)) return false;
+        // Reserve the actual visit duration plus movement allowance around fixed commitments.
         return events.stream().filter(e -> e.day() == day && !e.id().equals("transport:arrival") && !e.id().equals("transport:departure"))
-                .noneMatch(e -> visit < e.minute() + 15 + gap(d) && visit + 60 + gap(d) > e.minute());
+                .noneMatch(e -> visit < e.minute() + 15 + gap(d) && visit + duration + gap(d) > e.minute());
     }
     /** First-day evening activity must run through 20:00, after check-in, if the fixed commitments permit it. */
     public static int eveningStart(int day, int days, TravelDetails details, List<Event> events) {
@@ -193,7 +198,7 @@ public final class TravelSchedule {
             var t = d.transport();
             s.append("가는 편: ").append(t.mode()==TransportMode.KTX && t.train()!=null && t.boardingStation()!=null?t.boardingStation().name():t.originLocation().name()).append(" ").append(t.train()==null?t.originTime():t.train().departureTime()).append(" 출발 → ")
                     .append(t.mode()==TransportMode.KTX && t.train()!=null && t.alightingStation()!=null?t.alightingStation().name():t.arrivalPlace()).append(" ").append(t.arrivalTime()).append(" 도착 / 교통: ").append(t.mode())
-                    .append(t.train()!=null ? " / 열차 시간표: "+t.train().trainType()+" "+t.train().trainNo() : t.arrivalAuto() ? " / 경로 조회 소요 시간으로 계산한 예상 도착 시각" : " / 사용자가 확인한 도착 시각").append('\n');
+                    .append(t.flight()!=null ? " / 항공 시간표: "+t.flight().airline()+" "+t.flight().flightNo() : t.train()!=null ? " / 열차 시간표: "+t.train().trainType()+" "+t.train().trainNo() : t.arrivalAuto() ? " / 경로 조회 소요 시간으로 계산한 예상 도착 시각" : " / 사용자가 확인한 도착 시각").append('\n');
         }
         if(d.transport()!=null && d.transport().mode()==TransportMode.KTX && d.transport().returnTrain()!=null) {
             var t=d.transport().returnTrain();
@@ -214,7 +219,7 @@ public final class TravelSchedule {
                 .append("HOTEL은 사용자가 보관 가능을 확인한 계획, LOCKER는 이용 가능 여부 확인이 필요한 계획, CARRY는 짐을 소지한 이동입니다. CARRY일 때 짐이 부담되는 활동은 피하세요. 실시간 노선·이동시간·보관함 이용 가능을 확인했다고 단정하지 마세요.\n").toString();
     }
     public static void validateDraft(TripDraft draft) {
-        for(var day:draft.days()) for(var p:day.places()) if(p.fixedEventId()==null && !com.tripplanner.place.BusinessHoursRules.allowed(p.businessHours(),day.date(),p.visitTime()))
+        for(var day:draft.days()) for(var p:day.places()) if(p.fixedEventId()==null && com.tripplanner.place.BusinessHoursRules.evaluate(p.businessHours(),day.date(),p.visitTime(),p.stayMinutes()).closed())
             throw ApiException.badRequest(p.name()+": 운영시간 또는 휴무일과 겹치는 방문 시각입니다.");
         TravelDetails details = draft.travelDetails();
         if (details == null) {
@@ -229,16 +234,16 @@ public final class TravelSchedule {
             if (day.dayNumber() < 1 || day.dayNumber() > draft.days().size() || !dayNumbers.add(day.dayNumber()))
                 throw ApiException.badRequest("일차 번호가 올바르지 않습니다.");
             int previous = -1;
-            int previousVisit = -1;
+            int previousVisit = -1, previousDuration = 60;
             for (PlaceDraft p : day.places()) {
                 int time = minute(p.visitTime());
                 if (time <= previous) throw ApiException.badRequest("숙소·교통을 반영한 일정은 방문 시각 순서로 배치해 주세요.");
                 previous = time;
                 if (p.fixedEventId() == null) {
-                    if (previousVisit >= 0 && time < previousVisit + 60 + gap(details))
-                        throw ApiException.badRequest("장소 사이에 방문 60분과 이동 여유 시간을 확보해 주세요.");
-                    previousVisit = time;
-                    if (!allowed(day.dayNumber(), draft.days().size(), time, details, expected)) throw ApiException.badRequest("일반 장소가 고정 일정 또는 도착·출발 시간과 겹칩니다.");
+                    if (previousVisit >= 0 && time < previousVisit + previousDuration + gap(details))
+                        throw ApiException.badRequest("장소 사이에 체류시간과 이동 여유 시간을 확보해 주세요.");
+                    previousVisit = time; previousDuration = p.stayMinutes();
+                    if (!allowed(day.dayNumber(), draft.days().size(), time, details, expected, p.stayMinutes())) throw ApiException.badRequest("일반 장소가 고정 일정 또는 도착·출발 시간과 겹칩니다.");
                 } else {
                     Event event = expected.stream().filter(e -> e.id().equals(p.fixedEventId())).findFirst()
                             .orElseThrow(() -> ApiException.badRequest("알 수 없는 고정 일정입니다."));

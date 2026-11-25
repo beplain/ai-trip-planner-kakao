@@ -51,6 +51,17 @@ public class TripController {
     public TripResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable Long tripId) {
         return trips.get(tripId, CurrentUser.id(jwt));
     }
+    @GetMapping("/trash")
+    public List<RecoveryArchive.TrashItem> trash(@AuthenticationPrincipal Jwt jwt){return trips.trash(CurrentUser.id(jwt));}
+    @PostMapping("/{tripId}/restore")
+    public TripResponse restore(@AuthenticationPrincipal Jwt jwt,@PathVariable Long tripId){return trips.restore(tripId,CurrentUser.id(jwt));}
+    @DeleteMapping("/{tripId}/permanent")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void permanent(@AuthenticationPrincipal Jwt jwt,@PathVariable Long tripId){trips.permanentlyDelete(tripId,CurrentUser.id(jwt));}
+    @GetMapping("/{tripId}/deleted-places")
+    public List<RecoveryArchive.DeletedPlace> deletedPlaces(@AuthenticationPrincipal Jwt jwt,@PathVariable Long tripId){return trips.deletedPlaces(tripId,CurrentUser.id(jwt));}
+    @PostMapping("/{tripId}/deleted-places/{entryId}/restore")
+    public TripResponse restorePlace(@AuthenticationPrincipal Jwt jwt,@PathVariable Long tripId,@PathVariable String entryId,@RequestBody RecoveryArchive.RestorePlace req){return trips.restorePlace(tripId,entryId,req,CurrentUser.id(jwt));}
 
     @PutMapping("/{tripId}")
     public TripResponse update(@AuthenticationPrincipal Jwt jwt, @PathVariable Long tripId,

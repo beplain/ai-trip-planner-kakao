@@ -1,9 +1,9 @@
 import { useLocalSearchParams } from 'expo-router';
 import * as Location from 'expo-location';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { WebView, type WebViewMessageEvent } from 'react-native-webview';
+import { WebView, type MapWebViewHandle, type WebViewMessageEvent } from '@/components/map-webview';
 
 import { loadMapRoutes, type RouteLeg, type RouteSegment } from '../../../../services/map-routes';
 import { draftsApi } from '../../../../services/drafts';
@@ -11,6 +11,7 @@ import { apiError } from '../../../../services/api';
 import { tripsApi, type Place, type TripDraft } from '../../../../services/trips';
 import { RequireAuth } from '@/components/require-auth';
 import { ScreenHeader } from '@/components/screen-header';
+import { DayTabs } from '@/components/day-tabs';
 import { draftOptionLabel, hasCoords } from '@/lib/format';
 import { buildKakaoMapHtml, openDirections, openPlacePage } from '@/lib/kakao-map';
 import { C, DAY_COLORS, s } from '@/lib/styles';
@@ -39,7 +40,7 @@ function TripMapScreen() {
   const locationLock = useRef(false);
   const mounted = useRef(true);
   const [selected, setSelected] = useState<{ place: Place; dayNumber: number; order: number } | null>(null);
-  const webRef = useRef<WebView<Record<never, never>>>(null);
+  const webRef = useRef<MapWebViewHandle<Record<never, never>>>(null);
   const source = useMemo(() => ({ html: buildKakaoMapHtml(KAKAO_JS_KEY), baseUrl: 'http://localhost' }), []);
 
   useEffect(() => {
@@ -189,7 +190,7 @@ function TripMapScreen() {
     <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
       <ScreenHeader title={draftOptionLabel(trip.options?.find((entry) => entry.id === trip.selectedOption)?.label) ?? '여행 지도'} />
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10, gap: 8 }}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1, minWidth: 0 }} contentContainerStyle={{ alignItems: 'center', gap: 8, paddingRight: 8 }}>
+        <DayTabs>
           <Pressable onPress={() => { setSelected(null); setDayIdx('all'); }} style={[s.chip, dayIdx === 'all' && s.chipActive]}>
             <Text style={[s.chipText, dayIdx === 'all' && s.chipTextActive]}>전체</Text>
           </Pressable>
@@ -198,7 +199,7 @@ function TripMapScreen() {
               <Text style={[s.chipText, { color: DAY_COLORS[i % DAY_COLORS.length] }]}>DAY {d.dayNumber}</Text>
             </Pressable>
           ))}
-        </ScrollView>
+        </DayTabs>
         <Pressable accessibilityRole="button" accessibilityLabel="현재 위치 확인" disabled={!mapReady || !!mapError || locating}
           onPress={() => { void locate(); }} style={[s.smallButton, { minHeight: 44, paddingHorizontal: 12, justifyContent: 'center', flexShrink: 0 }, (!mapReady || !!mapError || locating) && s.disabled]}>
           <Text style={s.smallButtonText}>{locating ? '위치 확인 중…' : '◎ 내 위치'}</Text>

@@ -1,6 +1,6 @@
 import type { Day, Place, Role, Trip, TripDraft } from '../../services/trips';
 
-export const STYLE_OPTIONS = ['맛집', '힐링', '자연', '쇼핑', '문화', '액티비티', '카페', '야경'];
+export const STYLE_OPTIONS = ['맛집', '힐링', '자연', '쇼핑', '문화', '체험', '카페', '야경'];
 
 export function styleLabel(style: string) { return style === '액티비티' ? '체험' : style; }
 

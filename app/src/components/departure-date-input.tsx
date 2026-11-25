@@ -1,6 +1,7 @@
+import { AppModal as Modal } from './app-modal';
 import type { ComponentRef } from 'react';
 import { useEffect, useRef, useState } from 'react';
-import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { clampDateDay, isValidDate } from '@/lib/format';

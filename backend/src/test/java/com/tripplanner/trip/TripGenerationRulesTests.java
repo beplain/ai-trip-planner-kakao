@@ -78,7 +78,9 @@ class TripGenerationRulesTests {
         var places = new FakePlaces() { @Override public boolean enabled() { return false; } };
         var service = new TripGenerationService(ai, new SampleItineraryGenerator(), places);
         try {
-            assertEquals("PLACES_REQUIRED", assertThrows(ApiException.class, () -> service.generate(request())).getCode());
+            var partial=service.generate(request());
+            assertEquals("BEST_EFFORT",partial.source());
+            assertTrue(partial.days().stream().allMatch(day->day.places().isEmpty()));
             assertEquals(0, ai.calls);
         } finally { service.shutdown(); }
     }
@@ -102,7 +104,9 @@ class TripGenerationRulesTests {
         var places = new FakePlaces() { @Override public List<PlaceHit> search(String q, Area a, int size) { return List.of(); } };
         var service = new TripGenerationService(ai, new SampleItineraryGenerator(), places);
         try {
-            assertEquals("PLACES_UNAVAILABLE", assertThrows(ApiException.class, () -> service.generate(request())).getCode());
+            var partial=service.generate(request());
+            assertEquals("BEST_EFFORT",partial.source());
+            assertTrue(partial.days().stream().allMatch(day->day.places().isEmpty()));
             assertEquals(2, ai.calls);
         } finally { service.shutdown(); }
     }

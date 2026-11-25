@@ -19,7 +19,7 @@ final class RequestInterpretation {
             day는 여행 전체 어디든 0, 마지막 날 -1, 특정 일차 1~7입니다. daily는 매일 같은 조건이면 true이며 여행 전체 최소 1회는 false입니다.
             meal은 MEAL일 때 아침/점심/저녁/마지막 식당, MEAL_TIME일 때 아침/점심/저녁이고 그 외에는 빈 문자열입니다. 아침/점심/저녁/마지막 식당을 명시한 메뉴 요청만 MEAL로 해석하고, 끼니를 지정하지 않은 음식 메뉴 요청은 식당 방문 수 조건으로 해석합니다.
             마지막 날 마지막 식당은 day=-1,meal=마지막 식당입니다. 날짜가 없다는 이유로 매일 반복하지 마세요.
-            "횟집 2곳 추천해줘"는 EXACT, value=2, category=식당, target=횟집, day=0, daily=false입니다.
+            "회 2곳 추천해줘"는 EXACT, value=2, category=식당, target=회, day=0, daily=false입니다.
             '최소/적어도 1곳'은 INCLUDE(value=1), '한 곳만/딱 한 곳/하나만'과 '추천 카페 중 하나는 특정 브랜드'는 EXACT(value=1)입니다. 둘을 구분하세요.
             '카페 한 곳만 메가커피로'는 여행 전체 카페 중 메가커피를 정확히 한 곳 포함하고 나머지는 다른 카페로 추천하라는 뜻입니다.
             이 경우 category=카페,day=0,daily=false입니다. 카페 전체 개수를 1곳으로 줄이거나 매일 메가커피를 넣으라는 뜻이 아닙니다.

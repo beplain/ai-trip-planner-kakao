@@ -46,6 +46,26 @@ class RouteTimeClientTests {
     static PlaceDraft p(String name, double lng, String time) {
         return new PlaceDraft(name,name,"주소",35.0,lng,time,"","","관광",true,"url",null);
     }
+    @Test void rebuiltVariantKeepsMeasuredLegsAndCanLookUpANewOne() {
+        var builder=RestClient.builder(); var server=MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(containsString("origin=129.0,35.0")))
+                .andRespond(withSuccess("{\"routes\":[{\"result_code\":0,\"summary\":{\"duration\":600}}]}",MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("origin=129.01,35.0")))
+                .andRespond(withSuccess("{\"routes\":[{\"result_code\":0,\"summary\":{\"duration\":1200}}]}",MediaType.APPLICATION_JSON));
+        var client=new RouteTimeClient("test","",1,builder.build());
+        try {
+            var session=client.session(MovementMode.CAR);
+            var a=p("a",129,"10:00"); var b=p("b",129.01,"12:00"); var c=p("c",129.02,"14:00");
+            session.prefetch(List.of(List.of(a,b)));
+            assertEquals(10,session.minutes(a,b).getAsInt());
+            assertTrue(session.minutes(b,c).isEmpty());
+            var rebuilt=session.share();
+            assertEquals(10,rebuilt.minutes(a,b).getAsInt());
+            rebuilt.prefetch(List.of(List.of(b,c)));
+            assertEquals(20,rebuilt.minutes(b,c).getAsInt());
+            server.verify();
+        } finally { client.shutdown(); }
+    }
     @Test void carUsesDirectionalRoadMinutesAndCachesWithinOneGeneration() {
         var builder = RestClient.builder(); var server = MockRestServiceServer.bindTo(builder).build();
         server.expect(requestTo(containsString("apis-navi.kakaomobility.com")))

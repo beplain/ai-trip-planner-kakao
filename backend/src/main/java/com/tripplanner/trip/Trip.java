@@ -53,6 +53,12 @@ public class Trip {
 
     @Column(nullable = false)
     private Instant updatedAt;
+    private Instant deletedAt;
+    @Lob @Column(columnDefinition = "LONGTEXT") private String deletedPlaces;
+    public Instant getDeletedAt(){return deletedAt;}
+    void deletedAt(Instant value){deletedAt=value;touch();}
+    String deletedPlaces(){return deletedPlaces;}
+    void deletedPlaces(String value){deletedPlaces=value;touch();}
 
     @OneToMany(mappedBy = "trip", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("dayNumber ASC")
@@ -112,7 +118,7 @@ public class Trip {
     public LocalDate getStartDate() { return startDate; }
     public LocalDate getEndDate() { return endDate; }
     public String getBudget() { return budget; }
-    public List<String> getStyles() { return styles; }
+    public List<String> getStyles() { return com.tripplanner.ai.StyleNames.canonical(styles); }
     public Long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

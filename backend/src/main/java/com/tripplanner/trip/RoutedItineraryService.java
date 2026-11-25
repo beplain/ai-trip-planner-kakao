@@ -60,8 +60,12 @@ public class RoutedItineraryService {
         for (DayDraft day : optimized.days()) {
             List<PlaceDraft> out = new ArrayList<>();
             PlaceDraft previous = overnight(details, day.dayNumber(), true);
-            int previousTime = TravelSchedule.start(day.dayNumber(), details), previousOrdinary = -1;
+            int previousTime = TravelSchedule.start(day.dayNumber(), details), previousOrdinary = -1, previousOrdinaryDuration = 60;
             boolean virtualStart = previous != null;
+            int evening = TravelSchedule.eveningStart(day.dayNumber(), draft.days().size(), details, events);
+            PlaceDraft eveningVisit = evening < 0 ? null : day.places().stream()
+                    .filter(p -> p.fixedEventId() == null && TravelSchedule.minute(p.visitTime()) >= evening)
+                    .reduce((a, b) -> b).orElse(null);
             for (int i = 0; i < day.places().size(); i++) {
                 PlaceDraft place = day.places().get(i);
                 int original = TravelSchedule.minute(place.visitTime());
@@ -73,12 +77,21 @@ public class RoutedItineraryService {
                         warnings.add(day.dayNumber()+"일차 고정 일정 사이 이동 시간이 부족합니다: "+place.name()+". 숙소·교통 시각을 조정해 주세요.");
                     out.add(place); previous = place; previousTime = original; virtualStart = false; continue;
                 }
-                int time = Math.max(original, ready);
-                if (previousOrdinary >= 0) time = Math.max(time, previousOrdinary + 60 + TravelSchedule.gap(details));
+                // Measured travel can close idle gaps after a station or hotel stop.
+                // Keep meal slots and unknown-route timing until their constraints can be verified.
+                int time = DraftMealPlanner.scheduledMeal(place) || incoming.isEmpty()
+                        ? Math.max(original, ready) : Math.max(ready, TravelSchedule.start(day.dayNumber(), details));
+                time = ExtraRequestRules.visitStart(draft.effectiveRequest(), time);
+                if (place.equals(eveningVisit)) time = Math.max(time, evening);
+                if (previousOrdinary >= 0) time = Math.max(time, previousOrdinary + previousOrdinaryDuration + TravelSchedule.gap(details));
                 if (!DraftMealPlanner.scheduledMeal(place) || time != original) time = ((time + 4) / 5) * 5;
                 Map<PlaceDraft, Integer> origin = Map.of(place, original);
-                // Moving later must still respect meals/night, fixed commitments and daily bounds.
-                while (time < 22 * 60 && (!TravelSchedule.allowed(day.dayNumber(), draft.days().size(), time, details, events) || !eligible.test(place,TravelSchedule.clock(time)))) time += 5;
+                // Search for a feasible time without losing opening-hour, night-view or user constraints.
+                while (time < 22 * 60 && (!TravelSchedule.allowed(day.dayNumber(), draft.days().size(), time, details, events, place.stayMinutes())
+                        || !ExtraRequestRules.visitAllowed(draft.effectiveRequest(), time)
+                        || !TripRouteOptimizer.fits(place, TravelSchedule.clock(time), origin)
+                        || !ExtraRequestRules.mealTimeAllowed(place, TravelSchedule.clock(time), draft.effectiveRequest(), day.dayNumber(), draft.days().size())
+                        || !eligible.test(place, TravelSchedule.clock(time)))) time += 5;
                 PlaceDraft nextFixed = null;
                 for (int j = i + 1; j < day.places().size(); j++) if (day.places().get(j).fixedEventId() != null) {
                     nextFixed = day.places().get(j); break;
@@ -87,16 +100,16 @@ public class RoutedItineraryService {
                 OptionalInt outgoing = end == null ? OptionalInt.empty() : session.minutes(place, end);
                 int limit = nextFixed == null ? TravelSchedule.end(day.dayNumber(), draft.days().size(), details)
                         : TravelSchedule.minute(nextFixed.visitTime());
-                boolean fits = time < 22 * 60 && eligible.test(place,TravelSchedule.clock(time)) && time + 60 <= limit && TripRouteOptimizer.fits(place, TravelSchedule.clock(time), origin)
+                boolean fits = time < 22 * 60 && eligible.test(place,TravelSchedule.clock(time)) && time + place.stayMinutes() <= limit && TripRouteOptimizer.fits(place, TravelSchedule.clock(time), origin)
                         && TravelSchedule.allowed(day.dayNumber(), draft.days().size(), time, details, events)
                         && ExtraRequestRules.mealTimeAllowed(place,TravelSchedule.clock(time),draft.effectiveRequest(),day.dayNumber(),draft.days().size())
-                        && (outgoing.isEmpty() || time + 60 + outgoing.getAsInt() + (outgoing.getAsInt() > 0 ? 10 : 0) <= limit);
+                        && (outgoing.isEmpty() || time + place.stayMinutes() + outgoing.getAsInt() + (outgoing.getAsInt() > 0 ? 10 : 0) <= limit);
                 if (!fits) {
                     warnings.add(day.dayNumber()+"일차 이동·고정 일정 시간을 확보하기 위해 제외한 장소: "+place.name()+". 여행 스타일 일부가 빠질 수 있습니다.");
                     continue;
                 }
                 PlaceDraft moved = TripRouteOptimizer.at(place, TravelSchedule.clock(time));
-                out.add(moved); previous = moved; previousTime = time; previousOrdinary = time; virtualStart = false;
+                out.add(moved); previous = moved; previousTime = time; previousOrdinary = time; previousOrdinaryDuration = moved.stayMinutes(); virtualStart = false;
             }
             days.add(new DayDraft(day.dayNumber(), day.date(), List.copyOf(out)));
         }
@@ -111,8 +124,8 @@ public class RoutedItineraryService {
         OptionalInt time = session.minutes(a, b);
         return time.isPresent() ? time.getAsInt() : Double.NaN;
     }
-    private static int dwell(PlaceDraft p, TravelDetails d) {
-        if (p.fixedEventId() == null) return 60;
+    static int dwell(PlaceDraft p, TravelDetails d) {
+        if (p.fixedEventId() == null) return p.stayMinutes();
         if (p.fixedEventId().equals("transport:arrival")) return d != null && d.transport() != null && d.transport().mode() == TransportMode.PLANE ? 60 : 30;
         return p.fixedEventId().startsWith("transport:") ? 0 : 15;
     }
@@ -129,7 +142,7 @@ public class RoutedItineraryService {
         }
         return paths;
     }
-    private static PlaceDraft overnight(TravelDetails d, int day, boolean start) {
+    static PlaceDraft overnight(TravelDetails d, int day, boolean start) {
         if (d != null && d.stays() != null) for (Stay s : d.stays())
             if ((start ? s.checkInDay() < day && s.checkOutDay() >= day : s.checkInDay() <= day && s.checkOutDay() > day)
                     && s.latitude() != null && s.longitude() != null) return TripRouteOptimizer.anchor(s);

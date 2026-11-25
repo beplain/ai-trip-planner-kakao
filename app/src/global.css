@@ -7,3 +7,15 @@
   --font-rounded: 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif;
   --font-serif: Georgia, 'Times New Roman', serif;
 }
+
+/* Focus must not zoom the viewport; double taps on controls are ordinary taps. */
+input, textarea, select { font-size: 16px !important; }
+input::placeholder, textarea::placeholder { color: #A4ACBA !important; opacity: 1; }
+html, body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+button, input, textarea, select, [role="button"], [role="tab"] { touch-action: manipulation; }
+
+/* Limit text selection to editing fields; keep input selection/paste and scrolling intact. */
+body, body * { -webkit-user-select: none !important; user-select: none !important; }
+body input, body textarea, body [contenteditable="true"], body [contenteditable="true"] *, body [data-selectable="true"], body [data-selectable="true"] * {
+  -webkit-user-select: text !important; user-select: text !important;
+}

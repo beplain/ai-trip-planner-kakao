@@ -27,7 +27,7 @@ final class DraftOptionComposer {
             // Keep base candidates even when AI alternatives were unavailable.
             for (PlaceDraft p : day.places()) if (p.fixedEventId() == null && p.verified()) candidates.put(p.placeId(),p);
             for (PlaceDraft p : pool.getOrDefault(day.dayNumber(),List.of())) if (p.fixedEventId() == null && p.verified()) candidates.putIfAbsent(p.placeId(),p);
-            candidates.values().removeIf(p -> !ExtraRequestRules.allows(base.effectiveRequest(), p.name(), p.category()));
+            candidates.values().removeIf(p -> !ExtraRequestRules.allows(base.effectiveRequest(), p));
             List<PlaceDraft> ordered = new ArrayList<>(candidates.values());
             if (relaxed && !ordered.isEmpty()) {
                 PlaceDraft anchor = day.places().stream().filter(TripRouteOptimizer::known).findFirst().orElse(ordered.get(0));
@@ -36,9 +36,9 @@ final class DraftOptionComposer {
             } else Collections.reverse(ordered);
             List<ExtraRequestRules.Visit> counted=new ArrayList<>();
             for(DayDraft previousDay:days) for(PlaceDraft previous:previousDay.places()) if(previous.fixedEventId()==null)
-                counted.add(new ExtraRequestRules.Visit(previousDay.dayNumber(),previous.name(),previous.category(),previous.categoryPath()));
+                counted.add(new ExtraRequestRules.Visit(previousDay.dayNumber(),previous.name(),previous.category(),previous.categoryPath(),previous.placeId()));
             ordered.removeIf(p -> {
-                var visit = new ExtraRequestRules.Visit(day.dayNumber(),p.name(),p.category(),p.categoryPath());
+                var visit = new ExtraRequestRules.Visit(day.dayNumber(),p.name(),p.category(),p.categoryPath(),p.placeId());
                 if(!ExtraRequestRules.allowsAdditional(base.effectiveRequest(),visit,base.days().size(),counted)) return true;
                 counted.add(visit); return false;
             });
@@ -129,7 +129,7 @@ final class DraftOptionComposer {
             var anchor=day.places().stream().filter(TripRouteOptimizer::known).findFirst().orElse(null);
             var candidates=pool.getOrDefault(day.dayNumber(),List.of()).stream()
                 .filter(p->p.verified()&&p.fixedEventId()==null&&!used.contains(p.placeId())&&!names.contains(ItineraryRules.nameKey(p.name(),base.destination())))
-                .filter(p->ExtraRequestRules.allows(base.effectiveRequest(),p.name(),p.category()))
+                .filter(p->ExtraRequestRules.allows(base.effectiveRequest(),p))
                 .filter(p->needed==null||coverage(List.of(p),base.styles()).contains(needed))
                 .sorted(Comparator.comparingDouble(p->anchor!=null&&TripRouteOptimizer.known(p)?Geo.distanceMeters(anchor.latitude(),anchor.longitude(),p.latitude(),p.longitude()):0))
                 .limit(8).toList();
@@ -157,7 +157,7 @@ final class DraftOptionComposer {
         var tagged=new AiPlace(p.name(),p.placeId(),p.visitTime(),p.category(),p.reason()+" "+Objects.toString(p.categoryPath(),""),p.note(),styles == null ? List.of() : styles);
         return new AiPlace(tagged.name(),tagged.searchQuery(),tagged.visitTime(),tagged.category(),tagged.reason(),tagged.note(),List.copyOf(ItineraryRules.stylesFor(tagged)));
     }
-    private static Set<String> coverage(List<PlaceDraft> places, List<String> styles) {
+    static Set<String> coverage(List<PlaceDraft> places, List<String> styles) {
         Set<String> result = new HashSet<>();
         for (PlaceDraft p : places) if (p.fixedEventId() == null) result.addAll(ItineraryRules.stylesFor(asAi(p,styles)));
         return result;

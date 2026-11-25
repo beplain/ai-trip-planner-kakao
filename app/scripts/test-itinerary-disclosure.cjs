@@ -7,6 +7,13 @@ let active;
 let dimensions = { width: 390, fontScale: 1 };
 const jsx = (type, props) => ({ type, props });
 const modules = {};
+function loadModule(relative) {
+  const output = {};
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, relative), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS },
+  }).outputText, { exports: output, require() { throw new Error('unexpected import'); } });
+  return output;
+}
 function load(file) {
   const output = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/components', file), 'utf8'), {
@@ -19,6 +26,8 @@ function load(file) {
     if (id.endsWith('business-hours')) return { businessHoursNotice: () => ({ label: '운영시간 확인됨.', verified: true }) };
     if (id.endsWith('user-message')) return { userMessage: value => value };
     if (id === '@/lib/kakao-map') return {};
+    if (id === './place-recommendation') return {PlaceRecommendation:'PlaceRecommendation'};
+    if (id === '@/lib/place-blurb') return loadModule('../src/lib/place-blurb.ts');
     if (id === './fit-text') return modules.fitText;
     if (id === './itinerary-disclosure') return modules.disclosure;
     throw Error(id);
@@ -64,7 +73,7 @@ assert.match(text(tree), /12:20/); assert.match(text(tree), /남천리녹차팥�
 assert.doesNotMatch(text(tree), /추천 이유|운영시간 확인됨|메모|길찾기|삭제/);
 let toggle = nodes(tree).find(node => node.type === 'Button');
 assert.equal(toggle.props.accessibilityState.expanded, false); toggle.props.onPress();
-tree = first.render(); assert.match(text(tree), /추천 이유/); assert.match(text(tree), /운영시간 확인됨/);
+tree = first.render(); assert.match(text(tree), /💡\s+추천 이유/); assert.match(text(tree), /운영시간 확인됨/);
 assert.doesNotMatch(text(second.render()), /추천 이유/, 'Opening one itinerary leaves the other collapsed');
 const buttons = nodes(tree).filter(node => node.type === 'Button');
 buttons.find(node => text(node).includes('삭제')).props.onPress(); assert.equal(deletes, 1);
@@ -104,6 +113,14 @@ const legacy = PlaceCard({ place: { ...place, reason: '카카오맵에서 확인
 const legacyVisit = instance(nodes(legacy).find(node => node.type === modules.disclosure.ItineraryDisclosure).props);
 nodes(legacyVisit.render()).find(node => node.type === 'Button').props.onPress();
 const legacyText = text(legacyVisit.render());
-assert.match(legacyText, /임시휴무는 방문 전 확인해 주세요\.\s+💡\s+커피나 디저트/);
-assert.doesNotMatch(legacyText, /이동 가능한 시간대/);
+assert.match(legacyText, /임시휴무는 방문 전 확인해 주세요\./);
+assert.doesNotMatch(legacyText, /💡/, 'Missing recommendations must not be filled with stock text');
+assert.match(legacyText, /커피|디저트|카페/);
+assert.doesNotMatch(legacyText, /이동 가능한 시간대|둘러보|메뉴를 즐겨|나는 집/);
 assert.equal(legacyText.match(/임시휴무/g).length, 1);
+const meal = PlaceCard({ place: { ...place, category: '식당', reason: '식사 일정 · 저녁 · 순두부', note: '' }, index: 0, isLast: true, editable: false });
+const mealVisit = instance(nodes(meal).find(node => node.type === modules.disclosure.ItineraryDisclosure).props);
+nodes(mealVisit.render()).find(node => node.type === 'Button').props.onPress();
+const mealText = text(mealVisit.render());
+assert.doesNotMatch(mealText, /💡|순두부/, 'A menu marker alone is not a recommendation narrative');
+assert.doesNotMatch(mealText, /나는 집|저녁 식사로|메뉴를 즐겨/);

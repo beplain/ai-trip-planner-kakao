@@ -40,6 +40,7 @@ public class GoogleOpeningHoursClient {
     @PreDestroy public void close(){pool.shutdownNow();}
     public class Session {
         private final Map<String,GoogleOpeningHours> cache=new ConcurrentHashMap<>();
+        private final Map<String,CompletableFuture<GoogleOpeningHours>> inflight=new ConcurrentHashMap<>();
         private final AtomicInteger calls=new AtomicInteger();
         private final AtomicBoolean authFailure=new AtomicBoolean();
         private final long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(45);
@@ -58,7 +59,27 @@ public class GoogleOpeningHoursClient {
         }
 
         public GoogleOpeningHours lookup(PlaceDraft p) {
-            return cache.computeIfAbsent(key(p),ignored->load(p));
+            String id=key(p);
+            GoogleOpeningHours ready=cache.get(id);
+            if(ready!=null)return ready;
+            CompletableFuture<GoogleOpeningHours> created=new CompletableFuture<>();
+            CompletableFuture<GoogleOpeningHours> prior=inflight.putIfAbsent(id,created);
+            if(prior!=null) {
+                try { return prior.join(); }
+                catch(CompletionException e) {
+                    if(e.getCause() instanceof RuntimeException failure) throw failure;
+                    throw e;
+                }
+            }
+            try {
+                GoogleOpeningHours loaded=load(p);
+                cache.put(id,loaded);
+                created.complete(loaded);
+                return loaded;
+            } catch(RuntimeException e) {
+                created.completeExceptionally(e);
+                throw e;
+            } finally { inflight.remove(id,created); }
         }
         private GoogleOpeningHours load(PlaceDraft p) {
             if(authFailure.get())return GoogleOpeningHours.unknown("영업시간 조회 설정 오류");

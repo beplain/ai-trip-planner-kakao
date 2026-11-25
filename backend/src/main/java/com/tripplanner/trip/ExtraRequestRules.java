@@ -10,7 +10,28 @@ import java.util.regex.*;
 public final class ExtraRequestRules {
     private ExtraRequestRules() {}
     public record Check(String request, String status, String detail) {}
-    private record Rule(String source, String kind, String target, int value, boolean daily, int day, String meal, String category, List<String> aliases) {
+    static String closedRequiredPlaceReason(TripDraft draft, List<PlaceDraft> candidates,
+            java.util.function.BiFunction<DayDraft,PlaceDraft,com.tripplanner.place.GoogleOpeningHours.State> state) {
+        for(var rule:parse(draft.effectiveRequest()).rules()) {
+            if(!Set.of("INCLUDE","EXACT").contains(rule.kind()))continue;
+            var matching=candidates.stream().filter(p->p.verified() && p.fixedEventId()==null
+                    && matches(rule,p.name(),p.category(),p.categoryPath(),p.placeId())).toList();
+            if(matching.isEmpty())continue; // Missing search results are not proof of closure.
+            var scoped=draft.days().stream().filter(d->inScope(rule,d.dayNumber(),draft.days().size())).toList();
+            var closed=scoped.stream().filter(d->matching.stream().allMatch(p->
+                    state.apply(d,p)==com.tripplanner.place.GoogleOpeningHours.State.CLOSED)).toList();
+            if(closed.isEmpty() || !rule.daily() && closed.size()!=scoped.size())continue;
+            String dates=closed.stream().map(d->{
+                var date=d.date()!=null?d.date():draft.startDate()==null?null:draft.startDate().plusDays(d.dayNumber()-1);
+                return date==null?d.dayNumber()+"일차":date.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd(E)",Locale.KOREAN));
+            }).collect(java.util.stream.Collectors.joining(", "));
+            return "요청하신 '"+rule.target()+"'은 "+dates+"에 영업하지 않는 것으로 확인되어 휴무일과 겹칩니다. "
+                    +"필수 방문 조건을 충족할 수 없어 초안을 생성할 수 없습니다. 여행 날짜를 변경하거나 해당 장소의 추가 요청을 수정해 주세요.";
+        }
+        return null;
+    }
+    private record Rule(String source, String kind, String target, int value, boolean daily, int day, String meal, String category, List<String> aliases, String placeId) {
+        Rule(String source,String kind,String target,int value,boolean daily,int day,String meal,String category,List<String> aliases) {this(source,kind,target,value,daily,day,meal,category,aliases,null);}
         Rule(String source,String kind,String target,int value,boolean daily) { this(source,kind,target,value,daily,0,null,null,List.of()); }
     }
     private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
@@ -33,6 +54,7 @@ public final class ExtraRequestRules {
                 || (key(menu).equals("삼겹살") && key(categoryPath).contains("돼지고기구이")));
         }
         public boolean exact(String name,String categoryPath) {
+            if(Set.of("회","횟집").contains(key(menu)))return DraftMealPlanner.isFishRestaurant(name,categoryPath);
             return key(name).contains(key(menu)) || key(categoryPath).contains(key(menu));
         }
         public boolean claims(String name,String category,String description) {
@@ -85,6 +107,10 @@ public final class ExtraRequestRules {
     }
     public static String includePrompt(String request,int days) {
         StringBuilder out=new StringBuilder();
+        for(Rule rule:parse(request).rules()) if(rule.kind().equals("LIMIT")) {
+            String scope=rule.daily()?"매일":rule.day()==0?"여행 전체 합계":rule.day()+"일차";
+            out.append(scope).append(": ").append(rule.target()).append(" 최대 ").append(rule.value()).append("곳. 다른 대상의 장소로 나머지 일정을 구성하세요.\n");
+        }
         for(Rule rule:parse(request).rules()) if(Set.of("INCLUDE","EXACT").contains(rule.kind())) {
             String scope=rule.daily()?"매일":rule.day()==0?"여행 전체 "+days+"일 합계":(rule.day()==-1?days:rule.day())+"일차";
             out.append(scope).append(": ").append(rule.target()).append(rule.kind().equals("EXACT")?" 정확히 ":" 최소 ")
@@ -166,7 +192,7 @@ public final class ExtraRequestRules {
         if(matched.isEmpty()) return p;
         String reason=matched.stream().map(m->m.meal()+" 식사 요청: "+m.menu()).distinct().reduce((a,b)->a+", "+b).orElse("")+" · "+Objects.toString(p.reason(),"");
         if(reason.length()>500) reason=reason.substring(0,500);
-        return new PlaceDraft(p.placeId(),p.name(),p.address(),p.latitude(),p.longitude(),p.visitTime(),reason,p.note(),p.category(),p.verified(),p.placeUrl(),p.phone(),p.fixedEventId(),p.categoryPath()).withBusinessHours(p.businessHours());
+        return new PlaceDraft(p.placeId(),p.name(),p.address(),p.latitude(),p.longitude(),p.visitTime(),reason,p.note(),p.category(),p.verified(),p.placeUrl(),p.phone(),p.fixedEventId(),p.categoryPath()).withBusinessHours(p.businessHours()).withDurationMinutes(p.durationMinutes());
     }
     private static String compact(String s) { return s == null ? "" : Normalizer.normalize(s,Normalizer.Form.NFKC).toLowerCase(Locale.ROOT).replaceAll("\\s+",""); }
     private static String key(String s) { return compact(s).replaceAll("[^\\p{L}\\p{N}]",""); }
@@ -175,7 +201,8 @@ public final class ExtraRequestRules {
             .replaceAll("(?:일정에서|일정에|장소는|장소를|매장은|지점은)$","")
             .replaceAll("[은는을를]$","").replaceAll("(?:매장|지점|브랜드)$","").replaceAll("(?:꼭|반드시)$","");
     }
-    public record Visit(int day,String name,String category,String categoryPath) {
+    public record Visit(int day,String name,String category,String categoryPath,String placeId) {
+        public Visit(int day,String name,String category,String categoryPath) {this(day,name,category,categoryPath,null);}
         public Visit(int day,String name,String category) { this(day,name,category,null); }
     }
     private static boolean inScope(Rule rule,int day,int days) {
@@ -186,27 +213,34 @@ public final class ExtraRequestRules {
     }
 
     static boolean allowsAdditional(String request, Visit visit, int days, List<Visit> previous) {
-        return parse(request).rules().stream().filter(r -> r.kind().equals("EXACT") && inScope(r,visit.day(),days)
-                && matches(r,visit.name(),visit.category(),visit.categoryPath()))
+        return parse(request).rules().stream().filter(r -> Set.of("EXACT","LIMIT").contains(r.kind()) && inScope(r,visit.day(),days)
+                && matches(r,visit.name(),visit.category(),visit.categoryPath(),visit.placeId()))
                 .allMatch(r -> countMatches(r,visit.day(),days,previous) < r.value());
     }
 
     static boolean allowsRequestedMealRepeat(String request, Visit visit, int days, List<Visit> previous) {
         return parse(request).rules().stream().anyMatch(r -> Set.of("INCLUDE","EXACT").contains(r.kind())
                 && r.value() > 1 && !CATEGORIES.containsKey(r.target()) && inScope(r,visit.day(),days)
-                && matches(r,visit.name(),visit.category(),visit.categoryPath())
+                && matches(r,visit.name(),visit.category(),visit.categoryPath(),visit.placeId())
                 && countMatches(r,visit.day(),days,previous) < r.value());
     }
 
     private static long countMatches(Rule rule, int day, int days, List<Visit> visits) {
         return visits.stream().filter(v -> inScope(rule,v.day(),days) && (!rule.daily() || v.day()==day)
-                && matches(rule,v.name(),v.category(),v.categoryPath())).count();
+                && matches(rule,v.name(),v.category(),v.categoryPath(),v.placeId())).count();
     }
     public static List<com.tripplanner.ai.AiItinerary.AiPlace> includeSeeds(String request,String destination,int day,int days) {
         return parse(request).rules().stream().filter(r->Set.of("INCLUDE","EXACT").contains(r.kind()) && (r.day()==0 || r.day()==day || r.day()==-1 && day==days))
             .map(r->new com.tripplanner.ai.AiItinerary.AiPlace(r.target(),destination+" "+r.target(),"10:00",
-                r.category()==null || r.category().isBlank()?CATEGORIES.getOrDefault(r.target(),"관광"):r.category(),
+                seedCategory(r),
                 "추가 요청 필수 방문: "+r.target(),"",List.of())).toList();
+    }
+    private static String seedCategory(Rule rule) {
+        if(rule.category()!=null&&!rule.category().isBlank())return rule.category();
+        if(CATEGORIES.containsKey(rule.target()))return CATEGORIES.get(rule.target());
+        var probe=new PlaceDraft("",rule.target(),"",null,null,"10:00","","","식당",false,null,null);
+        if(DraftMealPlanner.dish(probe)!=null)return "식당";
+        return rule.target().matches(".*(카페|커피).*" )?"카페":"관광";
     }
     public static boolean includesSatisfied(String request,int day,int days,List<com.tripplanner.ai.AiItinerary.AiPlace> places) {
         return parse(request).rules().stream().filter(r->Set.of("INCLUDE","EXACT").contains(r.kind()) && (r.daily() || r.day()==day || r.day()==-1 && day==days || r.day()==0 && day==1))
@@ -214,7 +248,9 @@ public final class ExtraRequestRules {
     }
     private static Plan normalizeDefaultMenus(Plan plan) {
         return new Plan(plan.rules().stream().map(r->{
-            if(r.source()==null||r.target()==null)return r;
+            if(("횟집".equals(r.target())||"회".equals(r.target()))&&r.placeId()==null&&!"PLACE".equals(r.meal()))
+                r=new Rule(r.source().replace("횟집","회"),r.kind(),"회",r.value(),r.daily(),r.day(),r.meal(),"식당",r.aliases());
+            if(r.source()==null||r.target()==null||Set.of("COUNT","PLACE").contains(Objects.toString(r.meal(),"")))return r;
             String source=compact(r.source());
             boolean explicitScope=source.matches("(?s).*(매일|하루마다|아침|점심|저녁|조식|중식|석식|마지막식당).*");
             boolean quantity=source.matches("(?s).*(?:[0-9]+|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\\s*(?:곳|개|번|끼).*");
@@ -230,14 +266,17 @@ public final class ExtraRequestRules {
             try {
                 Plan plan=JSON.readValue(request.substring(STRUCTURED.length()),Plan.class);
                 if(plan.rules()!=null)plan=normalizeDefaultMenus(plan);
-                if(plan.rules()==null || plan.unknown()==null || plan.rules().size()>20) throw new IllegalArgumentException();
+                if(plan.rules()==null || plan.unknown()==null || plan.rules().size()>20 || request.length()>16000) throw new IllegalArgumentException();
                 for(Rule rule:plan.rules()) {
                     if(rule.source()==null || rule.source().isBlank() || rule.source().length()>200 || rule.target()==null || rule.target().length()>100
-                        || !Set.of("INCLUDE","EXACT","EXCLUDE","MEAL","MEAL_TIME","MAX","START","END").contains(rule.kind()) || rule.day() < -1 || rule.day()>7
+                        || !Set.of("INCLUDE","EXACT","LIMIT","EXCLUDE","MEAL","MEAL_TIME","MAX","START","END").contains(rule.kind()) || rule.day() < -1 || rule.day()>7
                         || rule.value()<0 || rule.value()>1440 || rule.aliases()==null || rule.aliases().size()>8
                         || rule.aliases().stream().anyMatch(a->a==null || a.isBlank() || a.length()>100)
                         || rule.category()==null || !Set.of("","관광","식당","카페","쇼핑","자연","문화","체험","기타").contains(rule.category())
-                        || Set.of("INCLUDE","EXACT","EXCLUDE","MEAL").contains(rule.kind()) && rule.target().isBlank()
+                        || Set.of("INCLUDE","EXACT","LIMIT","EXCLUDE","MEAL").contains(rule.kind()) && rule.target().isBlank()
+                        || rule.kind().equals("LIMIT") && rule.value()>20
+                        || rule.placeId()!=null && !rule.placeId().matches("[0-9]{1,30}")
+                        || rule.daily() && rule.day()!=0
                         || Set.of("INCLUDE","EXACT").contains(rule.kind()) && (rule.value()<1 || rule.value()>20)
                         || rule.kind().equals("MEAL_TIME") && (rule.value() > 1379
                             || !Set.of("아침","점심","저녁").contains(rule.meal()))
@@ -314,39 +353,76 @@ public final class ExtraRequestRules {
     public static int requiredPriority(String request,String name,String category) {
         return parse(request).rules().stream().anyMatch(r->Set.of("INCLUDE","EXACT").contains(r.kind()) && matches(r,name,category)) ? 10000 : 0;
     }
+    public static int requiredPriority(String request,String name,String category,String placeId) {
+        return parse(request).rules().stream().anyMatch(r->Set.of("INCLUDE","EXACT").contains(r.kind()) && matches(r,name,category,null,placeId)) ? 10000 : 0;
+    }
     static int requiredPriority(String request, PlaceDraft place) {
         return parse(request).rules().stream().anyMatch(r -> Set.of("INCLUDE","EXACT").contains(r.kind())
-                && matches(r,place.name(),place.category(),place.categoryPath())) ? 10000 : 0;
+                && matches(r,place.name(),place.category(),place.categoryPath(),place.placeId())) ? 10000 : 0;
     }
 
     public static void validateInput(String request,int days) {
         validateInput(request);
         for(Rule r:parse(request).rules()) if(r.day()>days)
             throw ApiException.badRequest("추가 요청의 "+r.day()+"일차가 여행 기간("+days+"일)을 벗어납니다. 날짜를 확인해 주세요.");
+        if(days<1 || days>7) return;
+        var counts=parse(request).rules().stream().filter(r->Set.of("INCLUDE","EXACT","LIMIT").contains(r.kind())).toList();
+        for(String target:counts.stream().map(Rule::target).distinct().toList()) {
+            int[] lower=new int[days],upper=new int[days]; Arrays.fill(upper,1000);
+            int totalLower=0,totalUpper=1000;
+            for(Rule r:counts) if(key(r.target()).equals(key(target))) {
+                int min=r.kind().equals("LIMIT")?0:Math.max(1,r.value());
+                int max=r.kind().equals("INCLUDE")?1000:r.value();
+                if(!r.daily() && r.day()==0) { totalLower=Math.max(totalLower,min);totalUpper=Math.min(totalUpper,max); }
+                else for(int day=1;day<=days;day++) if(inScope(r,day,days)) {
+                    lower[day-1]=Math.max(lower[day-1],min);upper[day-1]=Math.min(upper[day-1],max);
+                }
+            }
+            boolean conflict=Arrays.stream(lower).sum()>totalUpper || Arrays.stream(upper).sum()<totalLower;
+            for(int i=0;i<days;i++)conflict|=lower[i]>upper[i];
+            if(conflict)throw ApiException.badRequest(target+"의 매일·일차별·여행 전체 방문 횟수가 서로 맞지 않아요. 추가 요청을 확인해 주세요.");
+        }
     }
     public static void validateInput(String request) {
         Plan p=parse(request);
         if (!p.unknown().isEmpty() && request!=null && request.startsWith(STRUCTURED)) throw ApiException.badRequest("추가 요청 중 현재 데이터로 확인할 수 없는 조건이 있어요: "+String.join(" / ",p.unknown()));
         if (!p.unknown().isEmpty()) throw ApiException.badRequest("아직 자동으로 해석하거나 확인할 수 없는 요청이에요: "+String.join(" / ",p.unknown())+". 예: 다이소 제외; 해운대해수욕장 꼭 포함; 매일 10시 이후 시작; 하루 최대 3곳 이하");
         for (Rule a:p.rules()) for (Rule b:p.rules()) if (a.kind().equals("EXCLUDE") && Set.of("INCLUDE","EXACT").contains(b.kind())
-            && (key(a.target()).equals(key(b.target())) || key(b.target()).contains(key(a.target()))))
+            && (a.placeId()!=null && b.placeId()!=null ? a.placeId().equals(b.placeId()) : key(a.target()).equals(key(b.target())) || key(b.target()).contains(key(a.target()))))
             throw ApiException.badRequest("추가 요청에서 같은 장소를 포함하면서 제외할 수는 없어요: "+b.target());
+        for (Rule a:p.rules()) for (Rule b:p.rules()) {
+            if(!key(a.target()).equals(key(b.target())) || a.daily()!=b.daily() || a.day()!=b.day()) continue;
+            int lower=Set.of("INCLUDE","EXACT").contains(a.kind())?a.value():0;
+            int upper=Set.of("LIMIT","EXACT").contains(b.kind())?b.value():Integer.MAX_VALUE;
+            if(lower>upper) throw ApiException.badRequest(a.target()+"의 최소·최대 방문 횟수가 서로 맞지 않아요. 추가 요청을 확인해 주세요.");
+        }
     }
     private static boolean matches(Rule r,String name,String category) {
+        // AI scheduling has names, not map IDs yet. This is only a tentative claim;
+        // the verified candidate and final checks below must still match the selected ID.
+        if(r.placeId()!=null)return matches(new Rule(r.source(),r.kind(),r.target(),r.value(),r.daily(),r.day(),r.meal(),r.category(),r.aliases()),name,category,null,null);
         return matches(r,name,category,null);
     }
 
     private static boolean matches(Rule r,String name,String category,String categoryPath) {
+        return matches(r,name,category,categoryPath,null);
+    }
+    private static boolean matches(Rule r,String name,String category,String categoryPath,String placeId) {
+        if(r.placeId()!=null)return r.placeId().equals(placeId);
         if(r.category()!=null && !r.category().isBlank() && !r.category().equals(category)) return false;
         String categoryTarget=CATEGORIES.get(r.target());
         if (categoryTarget!=null) return categoryTarget.equals(category);
         String n=key(name),t=key(r.target());
         if ("식당".equals(category) && ("횟집".equals(t) || "회".equals(t))) return DraftMealPlanner.isFishRestaurant(name,categoryPath);
-        return n.contains(t) || r.aliases()!=null && r.aliases().stream().anyMatch(a->n.contains(key(a))) || (t.equals("다이소") && n.contains("daiso")) || (t.equals("daiso") && n.contains("다이소"));
+        return n.contains(t) || key(categoryPath).contains(t) || r.aliases()!=null && r.aliases().stream().anyMatch(a->n.contains(key(a))) || (t.equals("다이소") && n.contains("daiso")) || (t.equals("daiso") && n.contains("다이소"));
     }
     /** Used on actual map results before primary/alternative/fallback candidates are selected. */
     static boolean allows(String request,String name,String category) {
-        return parse(request).rules().stream().filter(r->r.kind().equals("EXCLUDE")).noneMatch(r->matches(r,name,category));
+        return allows(request,name,category,null);
+    }
+    static boolean allows(String request,PlaceDraft place) {return allows(request,place.name(),place.category(),place.placeId());}
+    static boolean allows(String request,String name,String category,String placeId) {
+        return parse(request).rules().stream().filter(r->r.kind().equals("EXCLUDE")).noneMatch(r->matches(r,name,category,null,placeId));
     }
     public static List<Check> checks(TripDraft draft) {
         Plan p=parse(draft.effectiveRequest()); List<Check> result=new ArrayList<>();
@@ -370,12 +446,13 @@ public final class ExtraRequestRules {
                 if(r.day()!=0 && day.dayNumber()!=(r.day()==-1?days.size():r.day())) continue;
                 List<PlaceDraft> all=day.places()==null?List.of():day.places();
                 List<PlaceDraft> visits=all.stream().filter(v->v.fixedEventId()==null).toList();
-                long count=visits.stream().filter(v->v.verified() && matches(r,v.name(),v.category(),v.categoryPath())).map(v->Objects.toString(v.placeId(),v.name())).distinct().count();
+                long count=visits.stream().filter(v->v.verified() && matches(r,v.name(),v.category(),v.categoryPath(),v.placeId())).map(v->Objects.toString(v.placeId(),v.name())).distinct().count();
                 includeCount+=count;
                 boolean failed=switch(r.kind()) {
-                    case "EXCLUDE" -> all.stream().anyMatch(v->matches(r,v.name(),v.category(),v.categoryPath()));
+                    case "EXCLUDE" -> all.stream().anyMatch(v->matches(r,v.name(),v.category(),v.categoryPath(),v.placeId()));
                     case "INCLUDE" -> r.daily() && count<Math.max(1,r.value());
                     case "EXACT" -> r.daily() && count!=r.value();
+                    case "LIMIT" -> r.daily() && count>r.value();
                     case "MAX" -> visits.size()>r.value();
                     case "START" -> visits.isEmpty() || visits.stream().anyMatch(v->time(v.visitTime())<r.value());
                     case "END" -> visits.isEmpty() || visits.stream().anyMatch(v->time(v.visitTime())<0 || time(v.visitTime())+60>r.value());
@@ -386,6 +463,8 @@ public final class ExtraRequestRules {
             if (days.isEmpty() || (Set.of("INCLUDE","EXACT").contains(r.kind()) && includeCount<Math.max(1,r.value()))) failures.add("필수 장소 "+r.target()+" 최소 "+Math.max(1,r.value())+"곳을 배치하지 못했어요. 검색 후보·동선·방문 가능 시간을 확인해 주세요.");
             if(r.kind().equals("EXACT") && !r.daily() && includeCount>r.value())
                 failures.add(r.target()+"는 정확히 "+r.value()+"곳이어야 하지만 "+includeCount+"곳이 배치됐어요. 나머지는 다른 장소로 추천해야 해요.");
+            if(r.kind().equals("LIMIT") && !r.daily() && includeCount>r.value())
+                failures.add(r.target()+"는 최대 "+r.value()+"곳이어야 하지만 "+includeCount+"곳이 배치됐어요.");
             result.add(new Check(r.source(),failures.isEmpty()?"APPLIED":"UNMET",failures.isEmpty()?evidence(r,days):String.join(", ",failures)+": 조건을 충족하지 못했어요."));
         }
         for (String unknown:p.unknown()) result.add(new Check(unknown,"UNVERIFIABLE","현재 기능으로 이 요청을 해석하거나 검증할 수 없어요. 문장이 덜 구체적이어서 발생한 오류는 아닙니다."));
@@ -415,8 +494,9 @@ public final class ExtraRequestRules {
     private static String evidence(Rule r,List<DayDraft> days) {
         return switch(r.kind()) {
             case "EXCLUDE" -> "제외 조건: "+r.target()+" · 전체 "+days.size()+"일의 장소명·카테고리에서 확인했어요.";
-            case "INCLUDE", "EXACT" -> "포함 조건: "+r.target()+(r.kind().equals("EXACT")?" 정확히 ":" 최소 ")+Math.max(1,r.value())+"곳 · 방문 장소: "+days.stream().flatMap(d->d.places().stream()).filter(v->v.verified()&&matches(r,v.name(),v.category(),v.categoryPath())).map(PlaceDraft::name).distinct().reduce((a,b)->a+", "+b).orElse("");
+            case "INCLUDE", "EXACT" -> "포함 조건: "+r.target()+(r.kind().equals("EXACT")?" 정확히 ":" 최소 ")+Math.max(1,r.value())+"곳 · 방문 장소: "+days.stream().flatMap(d->d.places().stream()).filter(v->v.verified()&&matches(r,v.name(),v.category(),v.categoryPath(),v.placeId())).map(PlaceDraft::name).distinct().reduce((a,b)->a+", "+b).orElse("");
             case "MAX" -> "매일 일반 방문 장소가 "+r.value()+"곳 이하예요. 숙소·교통 고정 항목은 제외해요.";
+            case "LIMIT" -> r.target()+" 방문 횟수가 "+(r.daily()?"매일 ":r.day()==0?"여행 전체 ":r.day()+"일차 ")+"최대 "+r.value()+"곳 이내예요.";
             case "START" -> "모든 일반 방문이 "+TravelSchedule.clock(r.value())+" 이후에 시작해요.";
             case "END" -> "일반 방문을 60분으로 계산해 "+TravelSchedule.clock(r.value())+"까지 마쳐요.";
             default -> "확인했어요.";

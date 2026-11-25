@@ -13,19 +13,72 @@ import java.util.*;
 @Service
 @Transactional
 public class TripService {
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private DraftEditLeaseRepository planLeases;
+    public record PlanUpdate(@jakarta.validation.constraints.NotNull Long version,
+        @jakarta.validation.constraints.NotEmpty @jakarta.validation.constraints.Size(max=7) List<@jakarta.validation.constraints.NotNull @jakarta.validation.Valid DayDraft> days) {}
+
+    public TripResponse savePlan(Long id,PlanUpdate request,Long user) {
+        var m=requireEditor(id,user);var trip=m.getTrip();
+        TripEditLocks.guard(id,user,planLeases,true);checkVersion(trip,request.version());
+        if(request.days().size()!=trip.getDays().size())throw ApiException.badRequest("여행 기간 변경은 새 초안으로 다시 계획해 주세요.");
+        var seen=new HashSet<Integer>();
+        for(var day:request.days()) {
+            int previous=-1;
+            for(var place:day.places()) {
+                int time=TravelSchedule.minute(place.visitTime());
+                if(time<=previous)throw ApiException.badRequest("방문 시각은 중복 없이 시간순으로 지정해 주세요.");
+                previous=time;
+            }
+            if(!seen.add(day.dayNumber()))throw ApiException.badRequest("일차가 중복되었습니다.");
+            var stored=trip.getDays().stream().filter(d->d.getDayNumber()==day.dayNumber()).findFirst().orElseThrow(()->ApiException.badRequest("일차가 다릅니다."));
+            if(!Objects.equals(stored.getDate(),day.date()))throw ApiException.badRequest("여행 날짜를 변경할 수 없습니다.");
+            var fixed=stored.getPlaces().stream().filter(p->p.getFixedEventId()!=null).map(RecoveryArchive::snapshot).toList();
+            var nextFixed=day.places().stream().filter(p->p.fixedEventId()!=null).toList();
+            if(!fixed.equals(nextFixed))throw ApiException.badRequest("숙소·교통 고정 일정은 새 초안에서 변경해 주세요.");
+            for(var old:stored.getPlaces()) {
+                if(old.getFixedEventId()!=null)continue;
+                if(request.days().stream().flatMap(d->d.places().stream()).noneMatch(p->Objects.equals(p.placeId(),old.getPlaceId())&&Objects.equals(p.name(),old.getName())&&Objects.equals(p.address(),old.getAddress())))
+                    trip.deletedPlaces(RecoveryArchive.add(trip.deletedPlaces(),day.dayNumber(),null,null,RecoveryArchive.snapshot(old)));
+            }
+            var fixedEntities=new HashMap<String,ItineraryPlace>();
+            var snapshots=stored.getPlaces().stream().map(RecoveryArchive::snapshot).toList();
+            stored.getPlaces().stream().filter(p->p.getFixedEventId()!=null).forEach(p->fixedEntities.put(p.getFixedEventId(),p));
+            stored.getPlaces().removeIf(p->p.getFixedEventId()==null);
+            int index=0;
+            for(var p:day.places()) {
+                var entity=p.fixedEventId()!=null?fixedEntities.get(p.fixedEventId()):stored.addPlace(toEntity(p));
+                entity.setOrderIndex(index++);
+                if(p.fixedEventId()==null){
+                    var old=snapshots.stream().filter(o->Objects.equals(o.placeId(),p.placeId())&&Objects.equals(o.name(),p.name())&&Objects.equals(o.address(),p.address())&&Objects.equals(o.visitTime(),p.visitTime())).findFirst();
+                    if(old.isPresent())entity.setBusinessHours(old.get().businessHours());else recheckHours(entity);
+                }
+            }
+        }
+        validateSchedule(trip);trip.touch();trips.flush();return TripMapper.trip(trip,m.getRole());
+    }
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private GoogleHoursScheduler editHours;
     private final TripRepository trips;
     private final TripMemberRepository members;
     private final TripInviteRepository invites;
     private final UserRepository users;
+    private final DraftDocumentRepository draftDocuments;
+    private final DraftInvitationRepository draftInvitations;
 
     public TripService(TripRepository trips, TripMemberRepository members, TripInviteRepository invites,
                        UserRepository users) {
+        this(trips,members,invites,users,null,null);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public TripService(TripRepository trips,TripMemberRepository members,TripInviteRepository invites,UserRepository users,
+                       DraftDocumentRepository draftDocuments,DraftInvitationRepository draftInvitations) {
         this.trips = trips;
         this.members = members;
         this.invites = invites;
         this.users = users;
+        this.draftDocuments=draftDocuments;
+        this.draftInvitations=draftInvitations;
     }
 
     // ───────── 조회 ─────────
@@ -167,6 +220,7 @@ public class TripService {
         ItineraryPlace p = findPlace(t, placeId);
         if (p.getFixedEventId() != null) throw ApiException.badRequest("고정 항목은 삭제할 수 없습니다. 초안의 여행 정보를 변경해 주세요.");
         TripDay day = p.getTripDay();
+        t.deletedPlaces(RecoveryArchive.add(t.deletedPlaces(),day.getDayNumber(),null,null,RecoveryArchive.snapshot(p)));
         day.getPlaces().remove(p);
         day.reindex();
         validateSchedule(t);
@@ -181,15 +235,62 @@ public class TripService {
         if (m.getRole() != MemberRole.OWNER) {
             throw ApiException.forbidden("여행 삭제는 만든 사람만 할 수 있습니다.");
         }
-        invites.deleteByTripId(tripId);
-        trips.delete(m.getTrip());
+        TripEditLocks.guard(tripId,userId,planLeases,false);
+        m.getTrip().deletedAt(java.time.Instant.now());
+        trips.flush();
+    }
+
+    @Transactional(readOnly=true)
+    public List<RecoveryArchive.TrashItem> trash(Long user) {
+        return trips.findByOwnerIdAndDeletedAtIsNotNullOrderByDeletedAtDesc(user).stream()
+                .filter(t->!RecoveryArchive.expired(t.getDeletedAt()))
+                .map(t->new RecoveryArchive.TrashItem(t.getId().toString(),t.getTitle(),t.getDestination(),t.getDeletedAt(),t.getDeletedAt().plus(RecoveryArchive.RETENTION))).toList();
+    }
+    private Trip trashed(Long id,Long user) {
+        var t=trips.lockById(id).orElseThrow(()->ApiException.notFound("삭제한 여행"));
+        if(!t.getOwner().getId().equals(user) || t.getDeletedAt()==null || RecoveryArchive.expired(t.getDeletedAt()))throw ApiException.notFound("삭제한 여행");
+        return t;
+    }
+    public TripResponse restore(Long id,Long user) {
+        var t=trashed(id,user);t.deletedAt(null);trips.flush();return TripMapper.trip(t,MemberRole.OWNER);
+    }
+    public void permanentlyDelete(Long id,Long user) {
+        if(trips.countOwnedTrash(id,user)==0)throw ApiException.notFound("삭제한 여행");
+        if(draftDocuments!=null)TrashMaintenance.lockFinalizedDrafts(draftDocuments,id);
+        var t=trashed(id,user);
+        if(draftDocuments!=null)TrashMaintenance.removeFinalizedDrafts(draftDocuments,draftInvitations,id);
+        invites.deleteByTripId(id);invites.flush();trips.delete(t);trips.flush();
+    }
+    @Transactional(readOnly=true)
+    public List<RecoveryArchive.DeletedPlace> deletedPlaces(Long id,Long user) {
+        return RecoveryArchive.read(membership(id,user).getTrip().deletedPlaces());
+    }
+    public TripResponse restorePlace(Long id,String entryId,RecoveryArchive.RestorePlace req,Long user) {
+        var m=requireEditor(id,user);var t=m.getTrip();checkVersion(t,req.version());
+        var row=RecoveryArchive.find(t.deletedPlaces(),entryId);
+        var day=t.getDays().stream().filter(d->d.getDayNumber()==row.dayNumber()).findFirst().orElseThrow(()->ApiException.badRequest("원래 일차를 찾을 수 없습니다."));
+        var restored=RecoveryArchive.at(row,req.visitTime());
+        RecoveryArchive.checkSpace(day.getPlaces().stream().map(RecoveryArchive::snapshot).toList(),restored,t.getTravelDetails());
+        var entity=day.addPlace(toEntity(restored));
+        var sorted=day.getPlaces().stream().sorted(Comparator.comparing(ItineraryPlace::getVisitTime)).toList();
+        for(int i=0;i<sorted.size();i++)sorted.get(i).setOrderIndex(i);
+        try {validateSchedule(t);}catch(ApiException e){throw ApiException.badRequest("복원할 시간이 고정 일정이나 다른 방문과 겹칩니다. 복원 시각을 조정해 주세요.");}
+        recheckHours(entity);
+        t.deletedPlaces(RecoveryArchive.remove(t.deletedPlaces(),entryId));trips.flush();
+        return TripMapper.trip(t,m.getRole());
+    }
+    void importDeletedPlaces(Long id,List<RecoveryArchive.DeletedPlace> entries) {
+        if(entries.isEmpty())return;
+        var t=lock(id);
+        t.deletedPlaces(RecoveryArchive.encode(entries.stream().map(e->new RecoveryArchive.DeletedPlace(e.id(),e.deletedAt(),e.dayNumber(),null,null,e.place())).toList()));
+        trips.flush();
     }
 
     // ───────── 권한 ─────────
 
     /** 구성원이 아니면 존재 여부도 노출하지 않도록 404 */
     TripMember membership(Long tripId, Long userId) {
-        return members.findByTripIdAndUserId(tripId, userId)
+        return members.findByTripIdAndUserId(tripId, userId).filter(m->m.getTrip().getDeletedAt()==null)
                 .orElseThrow(() -> ApiException.notFound("여행"));
     }
 
@@ -197,11 +298,12 @@ public class TripService {
         lock(tripId);
         TripMember m = membership(tripId, userId);
         if (!m.getRole().canEdit()) throw ApiException.forbidden("보기 권한만 있어 일정을 수정할 수 없습니다.");
+        TripEditLocks.guard(tripId,userId,planLeases,false);
         return m;
     }
 
     Trip lock(Long tripId) {
-        return trips.lockById(tripId).orElseThrow(() -> ApiException.notFound("여행"));
+        return trips.lockById(tripId).filter(t->t.getDeletedAt()==null).orElseThrow(() -> ApiException.notFound("여행"));
     }
 
     private static MemberRole roleOf(Trip t, Long userId) {
@@ -229,13 +331,14 @@ public class TripService {
                 safeUrl(p.placeUrl()), blankToNull(p.phone()));
         entity.setFixedEventId(p.fixedEventId());
         entity.setBusinessHours(p.businessHours());
+        entity.setDurationMinutes(p.durationMinutes());
         return entity;
     }
 
     private void recheckHours(ItineraryPlace p) {
         if(editHours==null)return;
         var place=new PlaceDraft(p.getPlaceId(),p.getName(),p.getAddress(),p.getLatitude(),p.getLongitude(),
-            p.getVisitTime(),p.getReason(),p.getNote(),p.getCategory(),p.isVerified(),p.getPlaceUrl(),p.getPhone());
+            p.getVisitTime(),p.getReason(),p.getNote(),p.getCategory(),p.isVerified(),p.getPlaceUrl(),p.getPhone()).withDurationMinutes(p.getDurationMinutes());
         p.setBusinessHours(editHours.session().checkEdited(place,p.getTripDay().getDate()).businessHours());
     }
 
@@ -243,7 +346,7 @@ public class TripService {
         var days = t.getDays().stream().map(d -> new DayDraft(d.getDayNumber(), d.getDate(),
                 d.getPlaces().stream().sorted(Comparator.comparingInt(ItineraryPlace::getOrderIndex))
                  .map(p -> new PlaceDraft(p.getPlaceId(), p.getName(), p.getAddress(), p.getLatitude(), p.getLongitude(),
-                         p.getVisitTime(), p.getReason(), p.getNote(), p.getCategory(), p.isVerified(), p.getPlaceUrl(), p.getPhone(), p.getFixedEventId()).withBusinessHours(p.getBusinessHours())).toList())).toList();
+                         p.getVisitTime(), p.getReason(), p.getNote(), p.getCategory(), p.isVerified(), p.getPlaceUrl(), p.getPhone(), p.getFixedEventId()).withBusinessHours(p.getBusinessHours()).withDurationMinutes(p.getDurationMinutes())).toList())).toList();
         TravelSchedule.validateDraft(new TripDraft(t.getTitle(), t.getDestination(), t.getStartDate(), t.getEndDate(),
                 t.getBudget(), t.getStyles(), days, null, List.of(), null, t.getTravelDetails()));
     }

@@ -34,12 +34,16 @@ assert.equal(helper.returnQuery({...transport,returnAlightingStation:origin}).al
 assert.equal(helper.patchTransport({...transport,returnAlightingStation:origin,returnTrain:two},{returnAlightingStation:arrival}).returnTrain,undefined);
 let hooks=[],cursor=0,effects=[],date='2027-05-01',current={movementMode:'CAR',stays:[],transport:{...transport,train:undefined}},pending=[],changes=0;
 const react={
+ useMemo(factory){return factory();},
  useState(initial){const i=cursor++;if(!(i in hooks))hooks[i]=initial;return[hooks[i],(v)=>{hooks[i]=v;}];},
  useRef(value){const i=cursor++;if(!(i in hooks))hooks[i]={current:value};return hooks[i];},
  useEffect(fn,deps){const i=cursor++,previous=hooks[i];if(!previous||deps.some((d,j)=>d!==previous.deps[j])){previous?.cleanup?.();const state=hooks[i]={deps};effects.push(()=>{state.cleanup=fn();});}},
 };
 const mod=compile('src/components/travel-details-input.tsx',(id)=>{
  if(id==='@/components/train-station-choices')return{TrainStationChoices:'StationChoices'};
+ if(id==='@/components/flight-transport-input')return{FlightTransportInput:'FlightInput'};
+ if(id==='@/lib/flight-selection')return compile('src/lib/flight-selection.ts',()=>({}));
+ if(id==='@/components/single-line-text')return{SingleLineText:'SingleLineText'};
  if(id==='react')return react;
  if(id==='react/jsx-runtime')return{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props}),Fragment:'Fragment'};
  if(id==='react-native')return{Keyboard:{dismiss(){}},Pressable:'Pressable',ScrollView:'ScrollView',Text:'Text',View:'View'};
@@ -57,6 +61,13 @@ function flatten(tree){if(!tree)return[];if(Array.isArray(tree))return tree.flat
 function textOf(node){if(node==null)return '';if(Array.isArray(node))return node.map(textOf).join('');if(typeof node==='object')return textOf(node.props?.children);return String(node);}
 function button(tree,text){return flatten(tree).find((n)=>n.type==='Pressable'&&textOf(n.props.children).includes(text));}
 (async()=>{
+ const savedTimes=current.transport;
+ current={...current,transport:{...savedTimes,originTime:'',departureTime:''}};
+ const timeFields=flatten(render()).filter(n=>n.type==='TimeField'&&n.props.label==='열차 출발 희망 시각');
+ assert.equal(timeFields.length,2);
+ assert.deepEqual(timeFields.map(n=>n.props.initialTime),['08:00','20:00']);
+ assert.deepEqual(timeFields.map(n=>n.props.value),['','']);
+ current={...current,transport:savedTimes};
  assert.match(mod.travelDetailsError(current,2,date),/열차 시간표/);
  assert.equal(button(render(),'열차 시간표 조회').props.disabled,true,'Choose a departure station before querying trains');
  flatten(render()).find(n=>n.type==='StationChoices').props.onChange(origin);
@@ -131,5 +142,22 @@ function button(tree,text){return flatten(tree).find((n)=>n.type==='Pressable'&&
  stationChoices.props.onChange({...origin,name:'용산역',placeId:'6'});
  assert.equal(current.transport.boardingStation.name,'용산역'); assert.equal(current.transport.train,undefined);
  assert.equal(current.transport.originLocation.name,'광화문');
+ const simultaneous=flatten(render()).filter(n=>n.type==='StationChoices');
+ simultaneous[0].props.onChange(origin);simultaneous[1].props.onChange(arrival);
+ assert.equal(current.transport.boardingStation.placeId,origin.placeId);
+ assert.equal(current.transport.alightingStation.placeId,arrival.placeId);
+ const emptyOutbound=pending.length;
+ task=flatten(render()).find(n=>n.type==='Pressable'&&textOf(n.props.children)==='열차 시간표 조회').props.onPress();pending[emptyOutbound].resolve([]);await task;
+ assert.match(textOf(render()),/조회된 열차가 없어요/);
+ assert.equal(current.transport.train,undefined);
+ current={...current,transport:{...current.transport,returnArrivalAuto:true,departureTime:'20:00',departureLocation:arrival,returnArrivalLocation:origin,returnBoardingStation:arrival,returnAlightingStation:origin}};
+ const emptyReturn=pending.length;
+ task=flatten(render()).filter(n=>n.type==='Pressable'&&textOf(n.props.children)==='열차 시간표 조회').at(-1).props.onPress();pending[emptyReturn].resolve([]);await task;
+ assert.match(textOf(render()),/조회된 열차가 없어요/);
+ assert.equal(current.transport.returnTrain,undefined);
+ const modes=flatten(render()).find(n=>n.props?.options?.some(o=>o[0]==='KTX'));
+ modes.props.onChange('CAR');assert.equal(current.transport.departureTime,'20:00');
+ const departure=flatten(render()).filter(n=>n.type==='TimeField'&&n.props.label==='출발 시각').at(-1);
+ assert.equal(departure.props.value,'20:00');assert.equal(departure.props.initialTime,'20:00');
  console.log('Train selection checks passed: default and alternate arrivals, stale responses, date/station/time changes, and manual fallback.');
 })().catch((error)=>{console.error(error);process.exitCode=1;});

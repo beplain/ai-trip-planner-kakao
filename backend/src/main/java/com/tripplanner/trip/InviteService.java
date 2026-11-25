@@ -78,6 +78,6 @@ public class InviteService {
     }
 
     private TripInvite find(String token) {
-        return invites.findByToken(token).orElseThrow(() -> ApiException.notFound("초대 링크"));
+        return invites.findByToken(token).filter(i->i.getTrip().getDeletedAt()==null).orElseThrow(() -> ApiException.notFound("초대 링크"));
     }
 }

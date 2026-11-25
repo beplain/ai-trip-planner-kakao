@@ -52,6 +52,7 @@ class TrainStationRecommendationTests {
         assertTrue(trains.calls.isEmpty());
     }
     @Test void providerOutagesAreNotMisreportedAsNoTrains() {
+
         var trains=new Trains() { @Override public List<TrainOption> options(Transport t,LocalDate date) { throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,"TRAIN_UNAVAILABLE","조회 실패"); } };
         assertEquals("TRAIN_UNAVAILABLE",assertThrows(ApiException.class,()->service(trains).recommend(request(),DATE)).getCode());
     }
@@ -76,6 +77,29 @@ class TrainStationRecommendationTests {
         assertEquals(List.of("2","10","8"),result.stream().map(SelectedPlace::placeId).toList());
         assertTrue(com.tripplanner.place.Geo.distanceMeters(ORIGIN.latitude(),ORIGIN.longitude(),result.get(2).latitude(),result.get(2).longitude())>20000); server.verify();
     }
+    @Test void namedRegionalStationIsRetainedEvenWhenThreeHighSpeedStationsAreCloser() {
+        var builder=RestClient.builder(); var server=MockRestServiceServer.bindTo(builder).build();
+        var origin=new SelectedPlace("1","부산 숙소","서울 관악구 문성로36길 37",37.48,126.91,null);
+        server.expect(queryParam("query",org.springframework.web.util.UriUtils.encodeQueryParam("KTX 정차역",java.nio.charset.StandardCharsets.UTF_8))).andRespond(withSuccess("""
+            {"documents":[
+              {"id":"2","place_name":"가역","address_name":"서울","x":"126.911","y":"37.48","category_name":"기차역 > KTX정차역"},
+              {"id":"3","place_name":"나역","address_name":"서울","x":"126.912","y":"37.48","category_name":"기차역 > KTX정차역"},
+              {"id":"4","place_name":"다역","address_name":"서울","x":"126.913","y":"37.48","category_name":"기차역 > KTX정차역"}]}
+            """,MediaType.APPLICATION_JSON));
+        server.expect(queryParam("query",org.springframework.web.util.UriUtils.encodeQueryParam("고속철도선",java.nio.charset.StandardCharsets.UTF_8))).andRespond(withSuccess("{\"documents\":[]}",MediaType.APPLICATION_JSON));
+        server.expect(queryParam("query",org.springframework.web.util.UriUtils.encodeQueryParam("서울역",java.nio.charset.StandardCharsets.UTF_8))).andRespond(withSuccess("""
+            {"documents":[
+              {"id":"5","place_name":"서울역","address_name":"서울 용산구","x":"126.972","y":"37.554","category_name":"교통 > 기차역 > 경부선"},
+              {"id":"6","place_name":"서울역","address_name":"서울 용산구","x":"126.972","y":"37.554","category_name":"교통 > 지하철역"}]}
+            """,MediaType.APPLICATION_JSON));
+        var result=new TrainStationRecommendationService(new Trains(),"test",builder.build()).candidates(origin,null);
+        assertEquals(List.of("2","3","5"),result.stream().map(SelectedPlace::placeId).toList());
+        assertEquals("경주역",TrainStationRecommendationService.regionalStationName("경상북도 경주시"));
+        assertEquals("양양역",TrainStationRecommendationService.regionalStationName("강원특별자치도 양양군"));
+        assertEquals("서울역",TrainStationRecommendationService.regionalStationName("서울특별시 관악구"));
+        assertEquals("부산역",TrainStationRecommendationService.regionalStationName("부산 부산진구"));
+        server.verify();
+    }
     @Test void boardingSelectionsSurviveJsonAndReturnQueriesUseTheReturnBoardingStation() throws Exception {
         var selected=request().withStations(A,B);
         var mapper=new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
@@ -90,6 +114,7 @@ class TrainStationRecommendationTests {
             {"documents":[{"id":"2","place_name":"서울역","address_name":"서울특별시 용산구","x":"126.97","y":"37.55","category_name":"교통 > 기차역 > KTX정차역"}]}
             """,MediaType.APPLICATION_JSON));
         server.expect(queryParam("sort","distance")).andRespond(withSuccess("{\"documents\":[]}",MediaType.APPLICATION_JSON));
+        server.expect(queryParam("query",org.springframework.web.util.UriUtils.encodeQueryParam("인천역",java.nio.charset.StandardCharsets.UTF_8))).andRespond(withSuccess("{\"documents\":[]}",MediaType.APPLICATION_JSON));
         var trains=new Trains() { @Override public List<TrainOption> options(Transport t,LocalDate date) {
             assertEquals(airport,t.originLocation()); assertEquals("서울역",t.boardingStation().name());
             return List.of(new TrainOption("seoul-busan",date,"1","KTX","서울","부산","08:30","11:00"));

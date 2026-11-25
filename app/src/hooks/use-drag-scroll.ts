@@ -14,7 +14,12 @@ export function useDragScroll() {
   const frame = useRef<(() => void) | null>(null);
   const begin = useCallback((absoluteY: number, recalculate: () => void) => {
     pointer.current = absoluteY; frame.current = recalculate; draggingRef.current = true; setDragging(true);
-    ref.current?.getNativeScrollRef()?.measureInWindow((_x, y, _width, height) => { viewport.current = { top: y, height }; });
+    const node=ref.current?.getNativeScrollRef();
+    if(typeof node?.measureInWindow==='function')node.measureInWindow((_x,y,_width,height)=>{viewport.current={top:y,height};});
+    else {
+      const rect=(node as unknown as {getBoundingClientRect?:()=>{top:number;height:number}}|undefined)?.getBoundingClientRect?.();
+      if(rect)viewport.current={top:rect.top,height:rect.height};
+    }
   }, []);
   const end = useCallback(() => {
     draggingRef.current = false; frame.current = null; setDragging(false);

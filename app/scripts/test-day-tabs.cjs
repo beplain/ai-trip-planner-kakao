@@ -1,0 +1,17 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
+const jsx=(type,props)=>({type,props});
+const timers=[];
+const ctx={exports:{},setTimeout:fn=>timers.push(fn),require:id=>id==='react'?{useRef:v=>({current:v})}:{jsx,jsxs:jsx}};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/day-tabs.web.tsx','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText,ctx);
+const props=ctx.exports.DayTabs({children:'days'}).props;
+let capture=false,prevented=0,stopped=0;
+const node={scrollLeft:80,hasPointerCapture:()=>capture,setPointerCapture:()=>{capture=true;},releasePointerCapture:()=>{capture=false;}};
+const event=x=>({pointerId:1,pointerType:'mouse',button:0,clientX:x,currentTarget:node,preventDefault(){prevented++;},stopPropagation(){stopped++;}});
+props.onPointerDown(event(100));props.onPointerMove(event(98));assert.equal(node.scrollLeft,80);assert.equal(capture,false);
+props.onClickCapture(event(98));assert.equal(stopped,0,'Normal day clicks must still work');
+props.onPointerMove(event(40));assert.equal(node.scrollLeft,140);assert.equal(capture,true);
+props.onPointerUp(event(40));assert.equal(capture,false);props.onClickCapture(event(40));assert.equal(stopped,1,'Drag must not accidentally select a day');timers.forEach(fn=>fn());
+props.onClickCapture(event(40));assert.equal(stopped,1);
+props.onPointerDown({...event(100),pointerType:'touch'});props.onPointerMove({...event(20),pointerType:'touch'});assert.equal(node.scrollLeft,140,'Touch scrolling stays browser-native');
+props.onKeyDown({target:node,currentTarget:node,key:'ArrowRight',preventDefault(){}});assert.equal(node.scrollLeft,240);
+console.log('DAY tabs passed: mouse dragging, normal clicks, drag click suppression, native touch and keyboard scroll.');

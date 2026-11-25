@@ -36,27 +36,28 @@ public class GoogleHoursScheduler {
                     if(allowed(p,date,p.visitTime())){out.add(p.withBusinessHours(null));continue;}
                     int original=TravelSchedule.minute(p.visitTime());PlaceDraft replacement=null;
                     List<ExtraRequestRules.Visit> others=new ArrayList<>();
-                    for(var otherDay:draft.days())for(var other:otherDay.places())if(other.fixedEventId()==null && !Objects.equals(other.placeId(),p.placeId()))others.add(new ExtraRequestRules.Visit(otherDay.dayNumber(),other.name(),other.category(),other.categoryPath()));
-                    for(var previousDay:days)for(var previous:previousDay.places())if(previous.fixedEventId()==null && !draft.days().stream().flatMap(d->d.places().stream()).anyMatch(v->Objects.equals(v.placeId(),previous.placeId())))others.add(new ExtraRequestRules.Visit(previousDay.dayNumber(),previous.name(),previous.category(),previous.categoryPath()));
-                    for(var previous:out)if(previous.fixedEventId()==null && !day.places().stream().anyMatch(v->Objects.equals(v.placeId(),previous.placeId())))others.add(new ExtraRequestRules.Visit(day.dayNumber(),previous.name(),previous.category(),previous.categoryPath()));
+                    for(var otherDay:draft.days())for(var other:otherDay.places())if(other.fixedEventId()==null && !Objects.equals(other.placeId(),p.placeId()))others.add(new ExtraRequestRules.Visit(otherDay.dayNumber(),other.name(),other.category(),other.categoryPath(),other.placeId()));
+                    for(var previousDay:days)for(var previous:previousDay.places())if(previous.fixedEventId()==null && !draft.days().stream().flatMap(d->d.places().stream()).anyMatch(v->Objects.equals(v.placeId(),previous.placeId())))others.add(new ExtraRequestRules.Visit(previousDay.dayNumber(),previous.name(),previous.category(),previous.categoryPath(),previous.placeId()));
+                    for(var previous:out)if(previous.fixedEventId()==null && !day.places().stream().anyMatch(v->Objects.equals(v.placeId(),previous.placeId())))others.add(new ExtraRequestRules.Visit(day.dayNumber(),previous.name(),previous.category(),previous.categoryPath(),previous.placeId()));
                     List<PlaceDraft> candidates=pool.getOrDefault(day.dayNumber(),List.of()).stream()
                         .filter(c->c.verified()&&c.fixedEventId()==null&&Objects.equals(c.category(),p.category())&&!reserved.contains(c.placeId()))
                         .sorted(Comparator.comparingDouble(c->distance(p,c))).limit(12).toList();
+                    lookups.prefetch(candidates);
                     for(var c:candidates) {
                         if(!ExtraRequestRules.allows(draft.effectiveRequest(),c.name(),c.category())
-                            ||!ExtraRequestRules.allowsAdditional(draft.effectiveRequest(),new ExtraRequestRules.Visit(day.dayNumber(),c.name(),c.category(),c.categoryPath()),draft.days().size(),others)
+                            ||!ExtraRequestRules.allowsAdditional(draft.effectiveRequest(),new ExtraRequestRules.Visit(day.dayNumber(),c.name(),c.category(),c.categoryPath(),c.placeId()),draft.days().size(),others)
                             ||!ExtraRequestRules.allowsMealHit(draft.effectiveRequest(),day.dayNumber(),draft.days().size(),p.name(),p.category(),p.reason(),c.name(),c.categoryPath()))continue;
-                        var moved=ExtraRequestRules.annotateMeal(TripRouteOptimizer.at(c,p.visitTime()),draft.effectiveRequest(),day.dayNumber(),draft.days().size());
+                        var moved=ExtraRequestRules.annotateMeal(TripRouteOptimizer.at(c,p.visitTime()).withDurationMinutes(p.durationMinutes()),draft.effectiveRequest(),day.dayNumber(),draft.days().size());
                         if(!ExtraRequestRules.mealTimeAllowed(moved,p.visitTime(),draft.effectiveRequest(),day.dayNumber(),draft.days().size()))continue;
                         if(allowed(moved,date,p.visitTime())&&requestsPreserved(draft,days,day,out,i,moved)){replacement=moved;break;}
                     }
                     // If no same-slot alternative is confirmed, move the original only within the next commitment.
                     if(replacement==null) {
-                        int limit=TravelSchedule.end(day.dayNumber(),draft.days().size(),draft.travelDetails())-60;
-                        if(i+1<day.places().size())limit=Math.min(limit,TravelSchedule.minute(day.places().get(i+1).visitTime())-60-TravelSchedule.gap(draft.travelDetails()));
+                        int limit=TravelSchedule.end(day.dayNumber(),draft.days().size(),draft.travelDetails())-p.stayMinutes();
+                        if(i+1<day.places().size())limit=Math.min(limit,TravelSchedule.minute(day.places().get(i+1).visitTime())-p.stayMinutes()-TravelSchedule.gap(draft.travelDetails()));
                         for(int time=original+10;time<=limit;time+=10) {
                             String slot=TravelSchedule.clock(time);
-                            if(TravelSchedule.allowed(day.dayNumber(),draft.days().size(),time,draft.travelDetails(),events)
+                            if(TravelSchedule.allowed(day.dayNumber(),draft.days().size(),time,draft.travelDetails(),events,p.stayMinutes())
                                 &&TripRouteOptimizer.fits(p,slot,Map.of(p,original))
                                 &&ExtraRequestRules.mealTimeAllowed(p,slot,draft.effectiveRequest(),day.dayNumber(),draft.days().size())&&allowed(p,date,slot)&&requestsPreserved(draft,days,day,out,i,TripRouteOptimizer.at(p,slot))) {
                                 replacement=TripRouteOptimizer.at(p,slot);break;
@@ -89,7 +90,7 @@ public class GoogleHoursScheduler {
                         &&Objects.equals(sourceDay.places().get(i).name(),original.name())) {placeIndex=i;break;}
                 if(placeIndex<0)continue;
                 var place=sourceDay.places().get(placeIndex);
-                if(lookups.lookup(place).assess(date(current,sourceDay),place.visitTime(),60).state()!=GoogleOpeningHours.State.CLOSED)continue;
+                if(lookups.lookup(place).assess(date(current,sourceDay),place.visitTime(),place.stayMinutes()).state()!=GoogleOpeningHours.State.CLOSED)continue;
                 var changed=relocate(current,sourceIndex,placeIndex,place,pool);
                 if(changed!=null){current=changed;moved++;}
             }
@@ -153,7 +154,7 @@ public class GoogleHoursScheduler {
         private boolean canMove(TripDraft draft,PlaceDraft place,DayDraft target,String slot,boolean requireOpen) {
             if(!TripRouteOptimizer.fits(place,slot,Map.of(place,TravelSchedule.minute(place.visitTime())))
                 ||!ExtraRequestRules.mealTimeAllowed(place,slot,draft.effectiveRequest(),target.dayNumber(),draft.days().size()))return false;
-            var state=lookups.lookup(place).assess(date(draft,target),slot,60).state();
+            var state=lookups.lookup(place).assess(date(draft,target),slot,place.stayMinutes()).state();
             return requireOpen?state==GoogleOpeningHours.State.OPEN:state!=GoogleOpeningHours.State.CLOSED;
         }
         private TripDraft relocationTrial(TripDraft draft,int source,List<PlaceDraft> left,int target,List<PlaceDraft> right,PlaceDraft moved) {
@@ -170,16 +171,16 @@ public class GoogleHoursScheduler {
         }
         private boolean validRelocatedDay(TripDraft draft,DayDraft day,List<PlaceDraft> places) {
             var events=TravelSchedule.events(draft.travelDetails(),draft.days().size());
-            int previous=-1,previousVisit=-1;
+            int previous=-1,previousVisit=-1,previousDuration=60;
             int gap=draft.travelDetails()==null?45:TravelSchedule.gap(draft.travelDetails());
             for(var p:places) {
                 int time=TravelSchedule.minute(p.visitTime());
                 if(time<=previous)return false;
                 previous=time;
                 if(p.fixedEventId()!=null)continue;
-                if(previousVisit>=0&&time<previousVisit+60+gap)return false;
-                previousVisit=time;
-                if(!TravelSchedule.allowed(day.dayNumber(),draft.days().size(),time,draft.travelDetails(),events))return false;
+                if(previousVisit>=0&&time<previousVisit+previousDuration+gap)return false;
+                previousVisit=time;previousDuration=p.stayMinutes();
+                if(!TravelSchedule.allowed(day.dayNumber(),draft.days().size(),time,draft.travelDetails(),events,p.stayMinutes()))return false;
             }
             return true;
         }
@@ -192,7 +193,7 @@ public class GoogleHoursScheduler {
                 List<PlaceDraft> out=new ArrayList<>();
                 for(var p:day.places()) {
                     if(p.fixedEventId()!=null){out.add(p);continue;}
-                    var assessment=lookups.lookup(p).assess(date(draft,day),p.visitTime(),60);
+                    var assessment=lookups.lookup(p).assess(date(draft,day),p.visitTime(),p.stayMinutes());
                     if(assessment.state()!=GoogleOpeningHours.State.CLOSED){
                         // Store only our validation receipt, never Google's raw opening-hour periods or place identifier.
                         var receipt=new BusinessHoursInfo(null,null,null,Instant.now().toString(),date(draft,day).toString(),
@@ -217,12 +218,12 @@ public class GoogleHoursScheduler {
             log.info("Google 영업시간 검증: API호출={} 확인방문={} 미확인유지={} 최종제외={}",lookups.calls(),confirmed,unconfirmed,0);
             if(count==0 && allowEmpty)return null;
             if(count==0)throw ApiException.badRequest("운영시간·휴무와 여행 조건을 충족하는 장소가 없어 초안을 만들지 못했습니다. 여행 시간·스타일을 조정해 주세요.");
-            if(confirmed>0)warnings.add("Google Maps 운영시간이 확인된 장소에 한해 일반 방문 60분을 검사했습니다.");
+            if(confirmed>0)warnings.add("Google Maps 운영시간이 확인된 장소에 한해 장소별 체류시간을 검사했습니다.");
             return DraftVariants.withDays(draft,days,warnings.stream().distinct().toList(),draft.options(),draft.selectedOption());
         }
         public PlaceDraft checkEdited(PlaceDraft place, LocalDate date) {
             if(place.fixedEventId()!=null)return place;
-            var assessment=lookups.lookup(place).assess(date,place.visitTime(),60);
+            var assessment=lookups.lookup(place).assess(date,place.visitTime(),place.stayMinutes());
             lookups.requireReady();
             if(assessment.state()==GoogleOpeningHours.State.CLOSED)
                 throw ApiException.badRequest(place.name()+": 변경한 방문 시각은 운영시간 밖이거나 휴무일입니다. 다른 시각을 선택해 주세요.");
@@ -238,12 +239,25 @@ public class GoogleHoursScheduler {
             return allowed(place, date(draft, day), place.visitTime());
         }
 
+        void requireRequestedPlacesOpen(TripDraft draft, Map<Integer,List<PlaceDraft>> candidates) {
+            var places=new LinkedHashMap<String,PlaceDraft>();
+            draft.days().forEach(d->d.places().forEach(p->places.putIfAbsent(p.placeId(),p)));
+            candidates.values().forEach(list->list.forEach(p->places.putIfAbsent(p.placeId(),p)));
+            var cache=new HashMap<String,GoogleOpeningHours.State>();
+            String reason=ExtraRequestRules.closedRequiredPlaceReason(draft,List.copyOf(places.values()),(day,p)->{
+                var date=date(draft,day);
+                if(date==null)return GoogleOpeningHours.State.UNKNOWN;
+                return cache.computeIfAbsent(p.placeId()+":"+date,key->lookups.lookup(p).dayState(date));
+            });
+            if(reason!=null)throw ApiException.badRequest(reason);
+        }
+
         public boolean fits(TripDraft draft,PlaceDraft place,String time) {
             if(place.fixedEventId()!=null)return true;
             for(var day:draft.days())if(day.places().stream().anyMatch(p->Objects.equals(p.placeId(),place.placeId())))return allowed(place,date(draft,day),time);
             return false;
         }
-        private boolean allowed(PlaceDraft p,LocalDate date,String time){return lookups.lookup(p).assess(date,time,60).state()!=GoogleOpeningHours.State.CLOSED;}
+        private boolean allowed(PlaceDraft p,LocalDate date,String time){return lookups.lookup(p).assess(date,time,p.stayMinutes()).state()!=GoogleOpeningHours.State.CLOSED;}
     }
     private static boolean requestsPreserved(TripDraft draft,List<DayDraft> completed,DayDraft current,List<PlaceDraft> before,int index,PlaceDraft replacement) {
         List<PlaceDraft> places=new ArrayList<>(before);places.add(replacement);places.addAll(current.places().subList(index+1,current.places().size()));

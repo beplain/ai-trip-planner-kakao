@@ -1,0 +1,11 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
+const ctx={exports:{},require:()=>({})};vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/lib/move-visit.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,ctx);
+const {moveVisit}=ctx.exports;
+const beach={id:1,name:'해운대해수욕장',visitTime:'10:00',note:'내 메모',durationMinutes:60};
+const days=[{dayNumber:1,date:'2026-12-01',places:[beach]},{dayNumber:2,date:'2026-12-02',places:[{name:'공원',visitTime:'15:00'}]}];
+const moved=moveVisit(days,0,0,1,'11:00');assert.equal(moved[0].places.length,0);assert.equal(moved[1].places[0].name,beach.name);assert.equal(moved[1].places[0].visitTime,'11:00');assert.equal(moved[1].places[0].note,'내 메모');assert.equal(moved[1].date,'2026-12-02');assert.equal(days[0].places.length,1);
+assert.throws(()=>moveVisit(days,0,0,1,'14:30'),/겹칩니다/);
+assert.throws(()=>moveVisit(days,0,0,1,'23:30'),/자정/);
+assert.throws(()=>moveVisit([{dayNumber:1,places:[{...beach,fixedEventId:'transport:arrival'}]}],0,0,0,'12:00'),/고정/);
+const same=moveVisit(days,0,0,0,'12:00');assert.equal(same[0].places.length,1);assert.equal(same[0].places[0].visitTime,'12:00');
+console.log('Visit move passed: cross-day move, sorting, metadata preservation, overlap, midnight and fixed-event protection.');

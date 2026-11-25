@@ -1,6 +1,8 @@
+import { AppTextInput as TextInput } from '@/components/app-text-input';
+import { useScreenAlert } from '@/components/use-screen-alert';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { apiError } from '../../services/api';
@@ -11,6 +13,7 @@ import { ScreenHeader } from '@/components/screen-header';
 import { useAuth } from '@/lib/auth-context';
 import { ROLE_LABEL, dateRange, formatBudget, parseInviteToken } from '@/lib/format';
 import { s } from '@/lib/styles';
+import { SingleLineText } from '@/components/single-line-text';
 
 export default function HomeRoute() {
   return <RequireAuth><HomeScreen /></RequireAuth>;
@@ -70,14 +73,13 @@ function TripsTab() {
         <View style={s.welcome}>
           <Text style={s.eyebrowLight}>AI와 함께 계획하는 여행</Text>
           <Text style={s.welcomeTitle}>다음 여행은{'\n'}어디로 갈까요?</Text>
-          <Text style={s.welcomeSub} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.55}>
-            목적지와 취향을 알려주면 AI가 일정 초안을 만들어 드려요.
-          </Text>
+          <SingleLineText style={s.welcomeSub} fontSize={14}>목적지와 취향을 알려주면 AI가 일정 초안을 만들어 드려요.</SingleLineText>
         </View>
         <Pressable style={s.primary} onPress={() => router.push('/create')}>
           <Text style={s.primaryText}>＋  AI로 새 여행 만들기</Text>
         </Pressable>
 
+        <Pressable accessibilityRole="button" style={s.outlineButton} onPress={() => router.push('/trash')}><Text style={s.outlineText}>휴지통 · 삭제한 여행 복원</Text></Pressable>
         {drafts.length > 0 && <View style={{ marginTop: 24 }}>
           <Text style={s.sectionTitle}>함께 편집 중인 초안</Text>
           <Text style={s.mutedSmall}>눌러서 여행 계획을 이어서 편집하세요</Text>
@@ -87,7 +89,7 @@ function TripsTab() {
         </View>}
         <View style={s.sectionHead}>
           <Text style={s.sectionTitle}>내 여행</Text>
-          <Text style={s.sectionHint}>{trips.length}개 · 아래로 당겨 새로고침</Text>
+          <Text style={s.sectionHint}>{trips.length}개</Text>
         </View>
         <TextInput value={query} onChangeText={setQuery} placeholder="목적지나 여행 이름 검색" style={s.search} />
 
@@ -126,18 +128,20 @@ function TripsTab() {
 
 function MeTab() {
   const { user, logout } = useAuth();
+  const {alert,dialog}=useScreenAlert();
   const [code, setCode] = useState('');
+  const [loggingOut,setLoggingOut]=useState(false);
 
   function join() {
     const token = parseInviteToken(code);
-    if (!token) return Alert.alert('초대 코드를 확인해 주세요', '받은 초대 링크 전체나 코드를 붙여 넣어 주세요.');
+    if (!token) return alert('초대 코드를 확인해 주세요', '받은 초대 링크 전체나 코드를 붙여 넣어 주세요.');
     setCode('');
     router.push(`/invite/${token}`);
   }
 
   return (
     <>
-      <ScreenHeader title="마이" back={false} />
+      {dialog}<ScreenHeader title="마이" back={false} />
       <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
         <View style={s.memberBox}>
           <Text style={s.sectionTitleSmall}>{user?.name}</Text>
@@ -150,10 +154,11 @@ function MeTab() {
         </Pressable>
 
         <Pressable
+          accessibilityRole="button" disabled={loggingOut}
           style={[s.outlineButton, { marginTop: 28 }]}
-          onPress={() => Alert.alert('로그아웃', '로그아웃할까요?', [
+          onPress={() => alert('로그아웃', '로그아웃할까요?', [
             { text: '취소', style: 'cancel' },
-            { text: '로그아웃', style: 'destructive', onPress: () => { void logout(); } },
+            { text: '로그아웃', style: 'destructive', onPress: () => { setLoggingOut(true);void logout().then(()=>router.replace('/')).catch(e=>alert('로그아웃하지 못했어요',apiError(e))).finally(()=>setLoggingOut(false)); } },
           ])}>
           <Text style={s.outlineText}>로그아웃</Text>
         </Pressable>

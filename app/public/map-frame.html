@@ -1,0 +1,10 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><script>
+(function(){
+  var channel=decodeURIComponent(location.hash.slice(1)),origin=location.origin;
+  window.addEventListener('message',function(event){
+    if(event.source!==parent||event.origin!==origin||!event.data||event.data.channel!==channel||typeof event.data.html!=='string')return;
+    document.open();document.write(event.data.html);document.close();
+  });
+  parent.postMessage({channel:channel,type:'map-frame-ready'},origin);
+})();
+</script></body></html>

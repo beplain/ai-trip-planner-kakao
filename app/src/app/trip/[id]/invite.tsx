@@ -78,7 +78,7 @@ function InviteScreen() {
 
         <View style={s.infoBox}>
           <Text style={s.infoTitle}>공동 편집 안내</Text>
-          <Text style={s.infoText}>{draftId ? '수정한 일정은 동행자와 함께 볼 수 있어요. 지금 동기화 버튼으로 최신 내용을 확인할 수 있어요.' : '편집 내용은 저장 후 다른 사람 화면에 10초 이내로 반영돼요.'} 두 사람이 동시에 고치면 나중에 저장한 쪽에 “새로고침 후 다시 시도” 안내가 표시됩니다. 링크는 7일 후 만료됩니다.</Text>
+          <Text style={s.infoText}>{draftId ? '수정한 일정은 동행자와 함께 볼 수 있으며 최신 내용은 자동으로 반영돼요.' : '편집 내용은 저장 후 다른 사람 화면에 10초 이내로 반영돼요.'} 동행자가 수정 중이면 편집이 잠시 잠깁니다. 링크는 7일 후 만료됩니다.</Text>
         </View>
 
         {invite ? (

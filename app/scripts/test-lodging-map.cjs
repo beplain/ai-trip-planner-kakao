@@ -7,7 +7,9 @@ const source = fs.readFileSync(path.join(__dirname, '../src/lib/lodging-map.ts')
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
 const exportsObject = {};
 vm.runInNewContext(compiled, { exports: exportsObject });
-const { parseLodgingPlace, buildLodgingMapHtml } = exportsObject;
+const { parseLodgingPlace, buildLodgingMapHtml, lodgingSearchQuery } = exportsObject;
+assert.equal(lodgingSearchQuery('부산광역시'),'부산 숙소');
+assert.equal(lodgingSearchQuery('경상북도 경주시'),'경주 숙소');
 const place = { placeId: '123', name: '숙소', address: '부산', latitude: 35.1, longitude: 129.1 };
 assert.equal(parseLodgingPlace(place).placeUrl, 'https://place.map.kakao.com/123');
 for (const invalid of [null, {}, { ...place, latitude: NaN }, { ...place, placeId: 'javascript:alert(1)' }, { ...place, address: '' }]) {
@@ -15,7 +17,7 @@ for (const invalid of [null, {}, { ...place, latitude: NaN }, { ...place, placeI
 }
 const messages = [], searches = [], geocodes = [], categories = [], mapClicks = [];
 class Position { constructor(latitude, longitude) { this.latitude = latitude; this.longitude = longitude; } getLat() { return this.latitude; } getLng() { return this.longitude; } }
-class MapStub { constructor(_element, options) { this.center = options.center; this.level = options.level; } getLevel() { return this.level ?? 5; } setCenter(center) { this.center = center; } setLevel(level) { this.level = level; } setBounds() {} panTo() {} addControl() {} getCenter() { return this.center ?? new Position(35, 129); } }
+class MapStub { constructor(_element, options) { this.center = options.center; this.level = options.level; } getLevel() { return this.level ?? 5; } setCenter(center) { this.center = center; } setLevel(level) { this.level = level; } setBounds() {} panTo(position) { this.center=position; } relayout() {} addControl() {} getCenter() { return this.center ?? new Position(35, 129); } }
 class Marker { setMap() {} }
 class InfoWindow { setContent() {} setPosition() {} open() {} close() {} }
 const context = { Number, String, setTimeout, clearTimeout, document: { getElementById() {}, createElement() { return { style: {} }; } },
@@ -49,6 +51,8 @@ assert.equal(messages.at(-1).type, 'lodging-results');
 context.selectLodging('456');
 assert.equal(messages.at(-1).type, 'lodging-selected');
 assert.equal(parseLodgingPlace(messages.at(-1).place).name, '대구 호텔');
+assert.equal(context.map.getLevel(),3);
+assert.equal(context.map.getCenter().getLat(),35.8);
 context.searchDestination('없는 숙소');
 searches[2].callback([], 'ZERO_RESULT');
 assert.equal(messages.at(-1).type, 'selection-error');
@@ -60,6 +64,8 @@ for (const script of transportHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/sc
 context.searchDestination('부산역');
 assert.equal(searches.at(-1).options.category_group_code, undefined, 'Transport selection must not be restricted to lodging');
 searches.at(-1).callback([{ ...hotel, id: '777', place_name: '부산역', category_group_code: 'SW8' }], 'OK');
+assert.equal(messages.at(-1).type,'lodging-selected');
+assert.equal(messages.at(-1).place.placeId,'777');
 context.selectLodging('777');
 assert.equal(messages.at(-1).place.name, '부산역');
 // Restore actual place candidates within 50m; never create an address-only map point.
@@ -113,14 +119,29 @@ const arrivalHtml = buildLodgingMapHtml('public-key', 'transport', '부산광역
 for (const script of arrivalHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)) {
   if (script[1].trim()) vm.runInContext(script[1], context);
 }
-assert.equal(geocodes.at(-1).query, '부산광역시');
-const messagesBeforeCentering = messages.length;
-geocodes.at(-1).callback([{ x: '129.0756', y: '35.1796' }], 'OK');
-assert.equal(context.map.getCenter().getLat(), 35.1796);
-assert.equal(context.map.getCenter().getLng(), 129.0756);
-assert.equal(context.map.getLevel(), 8);
-assert.deepEqual(messages.slice(messagesBeforeCentering).map(message => message.type), ['ready']);
-console.log('Arrival map centers on the destination without selecting a place.');
+assert.equal(searches.at(-1).query, '부산역');
+searches.at(-1).callback([{...hotel, id:'800', place_name:'부산역 경부선', category_name:'교통 > 기차역 > KTX정차역', x:'129.041', y:'35.115'}], 'OK');
+assert.equal(context.map.getCenter().getLat(),35.115);
+assert.equal(context.map.getLevel(),3);
+context.map.setCenter(new Position(35.10,129.02));
+context.relayoutDestinationMap();
+assert.equal(context.map.getCenter().getLat(),35.115,'Layout changes must restore the railway station, not a shifted center');
+assert.equal(messages.at(-1).type,'ready');
+console.log('Arrival map opens at the representative railway station.');
+const yangyangHtml=buildLodgingMapHtml('public-key','transport','강원특별자치도 양양군');
+for(const script of yangyangHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g))if(script[1].trim())vm.runInContext(script[1],context);
+assert.equal(searches.at(-1).query,'양양역');
+searches.at(-1).callback([], 'ZERO_RESULT');
+assert.equal(searches.at(-1).query,'양양 터미널');
+searches.at(-1).callback([{...hotel,id:'801',place_name:'양양종합여객터미널',category_name:'교통 > 고속,시외버스터미널',x:'128.62',y:'38.07'}], 'OK');
+assert.equal(context.map.getCenter().getLat(),38.07);
+assert.equal(context.map.getLevel(),3);
+const noStationHtml=buildLodgingMapHtml('public-key','transport','경상북도 청송군');
+for(const script of noStationHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g))if(script[1].trim())vm.runInContext(script[1],context);
+searches.at(-1).callback([], 'ZERO_RESULT');searches.at(-1).callback([], 'ZERO_RESULT');
+assert.equal(geocodes.at(-1).query,'경상북도 청송군');
+geocodes.at(-1).callback([{x:'129',y:'36'}],'OK');
+assert.equal(context.map.getLevel(),8);
 const returnHtml = buildLodgingMapHtml('public-key', 'transport', '부산광역시', { latitude: 35.115, longitude: 129.041 });
 const geocodesBeforeReturn = geocodes.length;
 for (const script of returnHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)) {
@@ -128,6 +149,6 @@ for (const script of returnHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/scrip
 }
 assert.equal(context.map.getCenter().getLat(), 35.115);
 assert.equal(context.map.getCenter().getLng(), 129.041);
-assert.equal(context.map.getLevel(), 5);
+assert.equal(context.map.getLevel(), 3);
 assert.equal(geocodes.length, geocodesBeforeReturn);
 assert.equal(messages.at(-1).type, 'ready');

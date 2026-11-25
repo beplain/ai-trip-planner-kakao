@@ -46,6 +46,13 @@ public class DraftController {
     public List<DraftRooms.RoomSummary> summaries(@AuthenticationPrincipal Jwt jwt) {
         return drafts.summaries(CurrentUser.id(jwt));
     }
+    @GetMapping("/trash") public List<RecoveryArchive.TrashItem> trash(@AuthenticationPrincipal Jwt jwt){return drafts.trash(CurrentUser.id(jwt));}
+    @PostMapping("/{id}/restore") public DraftRooms.RoomResponse restore(@AuthenticationPrincipal Jwt jwt,@PathVariable String id){return drafts.restore(id,CurrentUser.id(jwt));}
+    @DeleteMapping("/{id}/permanent") @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
+    public void permanent(@AuthenticationPrincipal Jwt jwt,@PathVariable String id){drafts.permanentlyDelete(id,CurrentUser.id(jwt));}
+    @GetMapping("/{id}/deleted-places") public List<RecoveryArchive.DeletedPlace> deletedPlaces(@AuthenticationPrincipal Jwt jwt,@PathVariable String id){return drafts.deletedPlaces(id,CurrentUser.id(jwt));}
+    @PostMapping("/{id}/deleted-places/{entryId}/restore")
+    public DraftRooms.RoomResponse restorePlace(@AuthenticationPrincipal Jwt jwt,@PathVariable String id,@PathVariable String entryId,@RequestBody RecoveryArchive.RestorePlace req){return drafts.restorePlace(id,entryId,req,CurrentUser.id(jwt));}
 
     @GetMapping("/{id}") public DraftRooms.RoomResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable String id) { return drafts.get(id, CurrentUser.id(jwt)); }
     @DeleteMapping("/{id}")

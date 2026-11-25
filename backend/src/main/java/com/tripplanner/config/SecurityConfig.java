@@ -69,7 +69,7 @@ public class SecurityConfig {
         CorsConfiguration c = new CorsConfiguration();
         c.setAllowedOriginPatterns(List.of("http://localhost:*", "http://127.0.0.1:*"));
         c.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        c.setAllowedHeaders(List.of("Authorization", "Content-Type", "ngrok-skip-browser-warning"));
+        c.setAllowedHeaders(List.of("Authorization", "Content-Type", "ngrok-skip-browser-warning", "X-Draft-Edit-Token"));
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/api/**", c);
         return source;

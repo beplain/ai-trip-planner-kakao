@@ -12,6 +12,12 @@ public class DraftDocument {
     @Lob @Column(columnDefinition = "LONGTEXT") private String regenerationHistory;
     @Version private Long version;
     private Long savedTripId;
+    private Instant deletedAt;
+    @Lob @Column(columnDefinition = "LONGTEXT") private String deletedPlaces;
+    public Instant getDeletedAt(){return deletedAt;}
+    void deletedAt(Instant value){deletedAt=value;updatedAt=Instant.now();}
+    String deletedPlaces(){return deletedPlaces;}
+    void deletedPlaces(String value){deletedPlaces=value;updatedAt=Instant.now();}
     @Column(nullable = false) private Instant updatedAt;
     protected DraftDocument() {}
     DraftDocument(Long ownerId, String content, String participants) {

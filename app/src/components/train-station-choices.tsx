@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Keyboard, Pressable, ScrollView, Text, View } from 'react-native';
 import { DestinationMapPicker } from '@/components/destination-map-picker';
 import { tripsApi, type SelectedPlace } from '../../services/trips';
@@ -7,6 +7,8 @@ import { s } from '@/lib/styles';
 
 type Props = { kind?: '출발역' | '도착역'; origin?: SelectedPlace; destination?: SelectedPlace; value?: SelectedPlace; disabled?: boolean; onChange: (station: SelectedPlace | undefined) => void };
 export function TrainStationChoices({ kind = '출발역', origin, destination, value, disabled, onChange }: Props) {
+  const latest = useRef({ value, disabled, onChange });
+  useEffect(() => { latest.current = { value, disabled, onChange }; }, [value, disabled, onChange]);
   const queryKey = JSON.stringify({ origin, destination });
   const [retry, setRetry] = useState(0);
   const [mapKey, setMapKey] = useState<string | null>(null);
@@ -19,13 +21,14 @@ export function TrainStationChoices({ kind = '출발역', origin, destination, v
     tripsApi.stationCandidates(query.origin, query.destination).then(stations => {
       if (!active) return;
       setResult({ key: requestKey, stations });
+      if (!latest.current.value && !latest.current.disabled && stations[0]) latest.current.onChange(stations[0]);
     }).catch(error => { if (active) setResult({ key: requestKey, error: apiError(error) }); });
     return () => { active = false; };
   }, [queryKey, requestKey]);
   const current = result?.key === requestKey ? result : undefined;
   const manualSelected = !!value && !!current?.stations && !current.stations.some(station => station.placeId === value.placeId);
   return <View style={{ gap: 7 }}>
-    {mapKey === queryKey && origin && !disabled && <DestinationMapPicker visible placeKind="transport" initialDestination=""
+    {mapKey === queryKey && origin && !disabled && <DestinationMapPicker visible placeKind="transport" initialDestination="" initialCenter={origin}
       onClose={() => setMapKey(null)} onSelect={() => undefined} onPlaceSelect={station => {
         onChange(station);
         setMapKey(null);

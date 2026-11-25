@@ -50,7 +50,7 @@ function ViewHero() {
     <View style={s.welcome}>
       <Text style={s.eyebrowLight}>AI 여행 플래너</Text>
       <Text style={s.welcomeTitle}>조건만 알려주면{'\n'}일정을 짜드려요</Text>
-      <Text style={s.welcomeSub}>AI가 제안한 일정을 지도에서 확인하고, 동행자와 함께 다듬어 보세요.</Text>
+      <Text style={s.welcomeSub}>AI가 제안한 일정을 지도에서 확인하고, 동행자와 함께{'\n'}다듬어 보세요.</Text>
     </View>
   );
 }

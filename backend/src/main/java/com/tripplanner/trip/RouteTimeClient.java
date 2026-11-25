@@ -59,6 +59,12 @@ public class RouteTimeClient {
         Session(MovementMode mode) { this.mode = mode; }
         boolean enabled() { return mode == MovementMode.WALK || !(mode == MovementMode.CAR ? carKey : transitKey).isBlank() && maxCalls > 0; }
         boolean incomplete() { return failed; }
+        /** Measured legs carry over. A rebuilt variant gets its own call budget and deadline. */
+        Session share() {
+            Session next = new Session(mode);
+            next.cache.putAll(cache);
+            return next;
+        }
         /** Reserve the same call budget before running independent existing legs concurrently. */
         void prefetch(List<List<PlaceDraft>> paths) {
             Map<String, Future<OptionalInt>> pending = new LinkedHashMap<>();

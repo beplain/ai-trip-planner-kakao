@@ -44,6 +44,9 @@ public class ItineraryPlace {
     /** "10:00" 같은 권장 방문 시각 (AI 추정치) */
     @Column(length = 10)
     private String visitTime;
+    private Integer durationMinutes;
+    public Integer getDurationMinutes() { return durationMinutes; }
+    public void setDurationMinutes(Integer minutes) { durationMinutes = minutes; }
 
     @Column(length = 500)
     private String reason;

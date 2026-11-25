@@ -1,5 +1,6 @@
+import { AppTextInput as TextInput } from '@/components/app-text-input';
 import { useState } from 'react';
-import { Keyboard, Pressable, Text, TextInput, View } from 'react-native';
+import { Keyboard, Pressable, Text, View } from 'react-native';
 
 import { DestinationMapPicker } from '@/components/destination-map-picker';
 import { destinationCandidates, destinationRegion, mapDestinationRegion } from '@/lib/destination-region';
@@ -19,7 +20,7 @@ export function DestinationInput({ value, onChange }: { value: string; onChange:
             onFocus={() => { setInput(value); setInvalid(false); }}
             onChangeText={(text) => { setInput(text); setInvalid(false); onChange(destinationRegion(text) ?? ''); }}
             onBlur={() => { const region = destinationRegion(input ?? value); setInvalid(!!input?.trim() && !region); if (region) { setInput(region); onChange(region); } }}
-            placeholder="예: 경주, 양양, 서울" style={[s.input, { paddingRight: 44 }]} maxLength={100} />
+            placeholder="예: 부산, 경주, 대전" style={[s.input, { paddingRight: 44 }]} maxLength={100} />
           {!!(input ?? value) && <Pressable accessibilityRole="button" accessibilityLabel="목적지 입력 지우기"
             onPress={() => { setInput(''); setInvalid(false); onChange(''); }}
             style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 44, alignItems: 'center', justifyContent: 'center' }}>

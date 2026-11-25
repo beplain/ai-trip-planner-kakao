@@ -1,4 +1,5 @@
-import { Text, TextInput, View } from 'react-native';
+import { AppTextInput as TextInput } from '@/components/app-text-input';
+import { Text, View } from 'react-native';
 
 import { formatBudget } from '@/lib/format';
 import { s } from '@/lib/styles';
@@ -33,7 +34,6 @@ export function BudgetInput({ value, onChange }: { value: string; onChange: (val
         value={numeric ? formatted.slice(0, -1) : formatted}
         onChangeText={(text) => onChange(text.replace(/\D/g, '').replace(/^0+(?=\d)/, '').slice(0, 15))}
         keyboardType="number-pad"
-        placeholder="예: 1,000,000"
         style={{ flex: 1, fontSize: 16, paddingVertical: 14, color: '#172033' }}
       />
       {(numeric || !formatted) && <Text style={{ fontSize: 16, color: '#172033', marginLeft: 4 }}>원</Text>}

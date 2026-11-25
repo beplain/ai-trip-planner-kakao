@@ -15,6 +15,14 @@ public final class GoogleOpeningHours {
     public GoogleOpeningHours(JsonNode place,LocalDate fetchedDate){this.place=place;this.fetchedDate=fetchedDate;this.unavailable=null;}
     private GoogleOpeningHours(String reason){place=null;fetchedDate=null;unavailable=reason;}
     public static GoogleOpeningHours unknown(String reason){return new GoogleOpeningHours(reason);}
+    /** CLOSED here means no opening at any minute, rather than one unsuitable visit time. */
+    public State dayState(LocalDate date) {
+        for (int minute=0; minute<24*60; minute++) {
+            var state=assess(date,LocalTime.of(minute/60,minute%60).toString(),1).state();
+            if(state!=State.CLOSED)return state;
+        }
+        return State.CLOSED;
+    }
     public Assessment assess(LocalDate date,String time,int dwell) {
         if(place==null)return unknownResult(unavailable);
         if(date==null)return unknownResult("여행 날짜가 없어 요일별 운영시간을 확인하지 못했습니다.");

@@ -61,17 +61,21 @@ class OpenAiRetryBudgetTests {
             .andExpect(jsonPath("$.response_format.json_schema.schema.properties.days.items.properties.places.items.properties.matchedStyles").doesNotExist())
             .andExpect(jsonPath("$.messages[0].content",org.hamcrest.Matchers.containsString("2~3곳")))
             .andExpect(jsonPath("$.messages[0].content",org.hamcrest.Matchers.containsString("일반 식당과 식당 대체 후보를 출력하지 마세요")))
+            .andExpect(jsonPath("$.messages[0].content",org.hamcrest.Matchers.containsString("메뉴·조리법·맛·인기·분위기를 추측하거나 업종별 예문을 돌려 쓰지 마세요.")))
+            .andExpect(jsonPath("$.messages[0].content",org.hamcrest.Matchers.containsString("방문 매력을 짧은 한국어 한 문장(40자 안팎)")))
+            .andExpect(jsonPath("$.messages[0].content",org.hamcrest.Matchers.containsString("주소·방문 시각·앞뒤 일정 설명은 넣지 마세요.")))
+            .andExpect(jsonPath("$.messages[0].content",org.hamcrest.Matchers.containsString("여행 전체에서 같은 서술어나 문장 구조를 반복하지 마세요.")))
             .andRespond(withSuccess(response,MediaType.APPLICATION_JSON));
         var props=new AppProperties(null,null,new AppProperties.OpenAi("test","configured-model","https://example.invalid/v1"),false,null,7,null);
         var client=new OpenAiItineraryClient(builder.build(),props,mapper);
-        var result=client.generate(new ItineraryRequest("부산",null,7,null,List.of("맛집","쇼핑","문화","액티비티","카페"),null,null,true));
+        var result=client.generate(new ItineraryRequest("부산",null,7,null,List.of("맛집","쇼핑","문화","체험","카페"),null,null,true));
         assertEquals(7,result.days().size());
         for(var day:result.days()) {
             for(var p:day.places()) { assertEquals("부산 "+p.name(),p.searchQuery());assertEquals("",p.note()); }
             for(var p:day.alternatives()) { assertEquals("부산 "+p.name(),p.searchQuery());assertEquals("",p.note()); }
         }
         var covered=new HashSet<String>();result.days().forEach(day->day.places().forEach(p->covered.addAll(p.matchedStyles())));
-        assertTrue(covered.containsAll(List.of("맛집","쇼핑","문화","액티비티","카페")));
+        assertTrue(covered.containsAll(List.of("맛집","쇼핑","문화","체험","카페")));
         assertEquals(29,result.days().stream().flatMap(day->day.places().stream()).count());
         server.verify();
     }
@@ -129,8 +133,8 @@ class OpenAiRetryBudgetTests {
         var req=new ItineraryRequest("부산",null,1,null,List.of("힐링","카페","자연","야경"),null);
         var result=new OpenAiItineraryClient(builder.build(),props,mapper).generate(req);
         assertTrue(ItineraryRules.validate(result,req).isEmpty());
-        assertTrue(result.days().get(0).places().stream().anyMatch(p->p.matchedStyles().contains("힐링")));
-        assertTrue(result.days().get(0).places().stream().anyMatch(p->p.matchedStyles().contains("야경")&&p.reason().equals("야경 감상")));
+        assertTrue(result.days().get(0).places().stream().anyMatch(p->p.name().equals("휴식카페")&&p.matchedStyles().contains("힐링")&&p.reason().isBlank()));
+        assertTrue(result.days().get(0).places().stream().anyMatch(p->p.matchedStyles().contains("야경")&&p.reason().isBlank()));
         server.verify();
     }
 

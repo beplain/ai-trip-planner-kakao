@@ -71,7 +71,7 @@ final class TripRouteOptimizer {
 
     static PlaceDraft at(PlaceDraft p, String time) {
         return new PlaceDraft(p.placeId(), p.name(), p.address(), p.latitude(), p.longitude(), time,
-                p.reason(), p.note(), p.category(), p.verified(), p.placeUrl(), p.phone(), p.fixedEventId(), p.categoryPath()).withBusinessHours(p.businessHours());
+                p.reason(), p.note(), p.category(), p.verified(), p.placeUrl(), p.phone(), p.fixedEventId(), p.categoryPath()).withBusinessHours(p.businessHours()).withDurationMinutes(p.durationMinutes());
     }
 
     static boolean known(PlaceDraft p) {

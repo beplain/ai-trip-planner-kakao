@@ -240,7 +240,7 @@ class DraftRegenerationTests {
         assertThrows(ApiException.class, () -> drafts.rename(room.id(), new RenameDraftRequest(current.version(), "변경"), owner));
         assertEquals(0, generator.calls);
     }
-    @Test void ownerDeletesDraftAndAllItsInvitationsButKeepsOtherDrafts() {
+    @Test void ownerTrashesDraftAndBlocksInvitationsButKeepsOtherDrafts() {
         String token = drafts.invite(room.id(), MemberRole.EDITOR, owner).token();
         String secondToken = drafts.invite(room.id(), MemberRole.VIEWER, owner).token();
         drafts.join(token, viewer);
@@ -249,9 +249,10 @@ class DraftRegenerationTests {
         var current = drafts.get(room.id(), owner);
         long tripCount = trips.count();
         drafts.delete(room.id(), current.version(), owner);
-        assertFalse(documents.existsById(room.id()));
-        assertFalse(draftInvites.existsById(token));
-        assertFalse(draftInvites.existsById(secondToken));
+        assertTrue(documents.existsById(room.id()));
+        assertNotNull(documents.findById(room.id()).orElseThrow().getDeletedAt());
+        assertTrue(draftInvites.existsById(token));
+        assertTrue(draftInvites.existsById(secondToken));
         assertTrue(documents.existsById(other.id()));
         assertTrue(draftInvites.existsById(otherToken));
         assertThrows(ApiException.class, () -> drafts.get(room.id(), viewer));

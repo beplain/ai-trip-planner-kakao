@@ -1,0 +1,16 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
+const ctx={exports:{}};vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/lib/place-blurb.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,ctx);
+const {placeRecommendation,placeRecommendations,itineraryRecommendations}=ctx.exports;
+assert.equal(placeRecommendation({name:'맥도날드',category:'식당'}),'');
+assert.equal(placeRecommendation({name:'남스시',category:'식당',reason:''}),'');
+assert.equal(placeRecommendation({name:'맥도날드',category:'식당',reason:'밥과 국이 기본으로 놓입니다.'}),'');
+assert.equal(placeRecommendation({name:'남스시',category:'식당',reason:'한 상 차림이 중심인 식당입니다.'}),'');
+assert.equal(placeRecommendation({name:'해운대해수욕장',reason:'해변을 따라 산책할 수 있어요. · 해운대해수욕장'}),'해변을 따라 산책할 수 있어요.');
+assert.equal(placeRecommendation({name:'카페(본점)',reason:'방문 이유 · 카페(본점)'}),'방문 이유');
+assert.equal(placeRecommendation({name:'식당',reason:'식사 일정 · 점심 · 냉면'}),'');
+assert.equal(placeRecommendation({name:'박물관',reason:'지역 생활 도구를 전시한 공간입니다.'}),'지역 생활 도구를 전시한 공간입니다.');
+const places=[{name:'A',reason:'지역 작가의 작품을 볼 수 있어요.'},{name:'B',reason:'생활 유물을 볼 수 있어요.'}];
+const lines=placeRecommendations(places);assert.equal(lines[0],places[0].reason);assert.equal(lines[1],places[1].reason);
+assert.equal(placeRecommendations([{reason:'같은 문구'},{reason:'같은 문구'}])[1],'');
+assert.equal(itineraryRecommendations([{places}]).get(places[1]),places[1].reason);
+console.log('Recommendation checks passed: no fabricated replacement text, no stock food claims, real narratives retained and no appended place names.');

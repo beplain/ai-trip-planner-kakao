@@ -10,7 +10,7 @@ final class TripMapper {
     static PlaceResponse place(ItineraryPlace p) {
         return new PlaceResponse(p.getId(), p.getPlaceId(), p.getName(), p.getAddress(), p.getLatitude(),
                 p.getLongitude(), p.getVisitTime(), p.getReason(), p.getNote(), p.getCategory(), p.isVerified(),
-                p.getPlaceUrl(), p.getPhone(), p.getOrderIndex(), p.getFixedEventId(), p.getBusinessHours());
+                p.getPlaceUrl(), p.getPhone(), p.getOrderIndex(), p.getFixedEventId(), p.getBusinessHours(), p.getDurationMinutes());
     }
 
     static TripResponse trip(Trip t, MemberRole myRole) {

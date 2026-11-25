@@ -1,0 +1,16 @@
+{
+  "build": {
+    "release": {
+      "distribution": "internal",
+      "developmentClient": false,
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://beplain-trip.duckdns.org",
+        "EXPO_PUBLIC_DEV_LOGIN": "false"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    }
+  }
+}

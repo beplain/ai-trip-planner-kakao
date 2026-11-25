@@ -1,0 +1,32 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
+function load(path,mocks={},extra={}){const c={exports:{},require:id=>mocks[id],...extra};vm.runInNewContext(ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText,c);return c.exports;}
+const {dragVisit}=load('src/lib/drag-visit.ts'),p=(name,visitTime,fixedEventId)=>({name,placeId:name,visitTime,fixedEventId}),d=(dayNumber,places)=>({dayNumber,places});
+const input=[d(1,[p('A','10:00'),p('B','12:00')]),d(2,[p('C','11:00'),p('D','14:00')])];
+const moved=dragVisit(input,0,1,1,1);assert.deepEqual(Array.from(moved[1].places,p=>p.name),['C','B','D']);assert.equal(input[0].places.length,2);
+const min=t=>+t.slice(0,2)*60 + +t.slice(3);for(let i=1;i<moved[1].places.length;i++)assert.ok(min(moved[1].places[i].visitTime)-min(moved[1].places[i-1].visitTime)>=105);
+const arrival=p('역','09:26','transport:arrival'),hotel=p('호텔','15:00','stay:0:checkin');
+const fixed=[d(1,[arrival,p('A','11:00'),hotel]),d(2,[p('B','10:00')])],details={movementMode:'CAR',transport:{mode:'BUS',arrivalTime:'09:26',departureTime:'20:00'}};
+const result=dragVisit(fixed,1,0,0,0,details);assert.equal(result[0].places.find(p=>p.fixedEventId==='transport:arrival'),arrival);assert.equal(result[0].places.find(p=>p.fixedEventId==='stay:0:checkin'),hotel);assert.ok(result[0].places.find(p=>p.name==='B').visitTime>='09:56');assert.throws(()=>dragVisit(fixed,0,0,1,0,details),/고정 일정/);
+assert.throws(()=>dragVisit([d(1,[p('A','10:00')]),d(2,Array.from({length:14},(_,i)=>p(`P${i}`,'12:00')))],0,0,1,0),/시간이 부족/);
+let state,grant,started=0,cancelled=0,drops=[],offset=0,frame;
+const hooks={useRef:v=>({current:v}),useState:v=>[v,n=>state=n],useEffect:fn=>{fn();},useMemo:fn=>fn()};
+const {useCrossDayDrag}=load('src/hooks/use-cross-day-drag.ts',{react:hooks,'react-native':{}},{setTimeout,clearTimeout});
+const engine=useCrossDayDrag({begin:(_y,f)=>{started++;frame=f;},end(){},move(){},getOffset:()=>offset},{start:()=>new Promise(resolve=>grant=resolve),cancel:()=>cancelled++,error:m=>{throw Error(m);},drop:(s,t)=>drops.push([s,t])});
+const node=(top,height)=>({measureInWindow:fn=>fn(0,top,400,height)});
+engine.bind(0,-1,true)(node(0,200));engine.bind(1,-1,true)(node(200,200));engine.bind(0,0)(node(40,100));engine.bind(1,0)(node(240,100));
+(async()=>{
+ let pending=engine.start(0,0,75);engine.end(false);grant(true);await pending;assert.equal(started,0);assert.equal(cancelled,1);
+ pending=engine.start(0,0,75);grant(true);await pending;engine.move(260);assert.equal(state.target.day,1);engine.end(true);await Promise.resolve();await Promise.resolve();assert.equal(drops[0][1].day,1);
+ pending=engine.start(0,0,75);grant(true);await pending;offset=220;frame();assert.equal(state.target.day,1);engine.end(false);
+ let timers=new Map(),counter=0,events=new Map(),began=0,ends=[],prevented=0;
+ const dom={addEventListener:(t,f)=>events.set(t,f),removeEventListener:(t,f)=>{if(events.get(t)===f)events.delete(t);}};
+ const jsx=(type,props)=>({type,props});
+ const {DragHandle}=load('src/components/drag-handle.web.tsx',{react:{useRef:v=>({current:v}),useEffect(){}},'react/jsx-runtime':{jsx,jsxs:jsx},'@/lib/styles':{C:{primary:'blue'}}},{document:dom,window:dom,Element:class {},setTimeout:fn=>{timers.set(++counter,fn);return counter;},clearTimeout:id=>timers.delete(id)});
+ const handle=DragHandle({children:'card',onStart:()=>began++,onMove(){},onEnd:ok=>ends.push(ok)}),down=()=>handle.props.onPointerDown({button:0,pointerId:1,clientX:0,clientY:50});
+ down();events.get('pointermove')({pointerId:1,clientX:0,clientY:70});assert.equal(timers.size,0);assert.equal(began,0);assert.equal(events.has('touchmove'),false);
+ down();[...timers.values()][0]();events.get('touchmove')({touches:[{}],cancelable:true,preventDefault:()=>prevented++});events.get('pointerup')({pointerId:1});assert.equal(began,1);assert.equal(prevented,1);assert.equal(ends[0],true);assert.equal(events.size,0);
+ let clickBlocked=0;handle.props.onClickCapture({preventDefault:()=>clickBlocked++,stopPropagation:()=>clickBlocked++});assert.equal(clickBlocked,2,'A long drag must not also expand the card on release');
+ handle.props.onClickCapture({preventDefault:()=>clickBlocked++,stopPropagation:()=>clickBlocked++});assert.equal(clickBlocked,2,'Subsequent normal clicks remain available');
+ down();[...timers.values()].at(-1)();events.get('pointercancel')();assert.equal(ends.at(-1),false);assert.equal(events.size,0);
+ console.log('Cross-DAY drag checks passed: automatic times, fixed events, full-day rollback, delayed permission, edge scrolling, short swipe and touch cancellation.');
+})().catch(e=>{console.error(e);process.exitCode=1;});

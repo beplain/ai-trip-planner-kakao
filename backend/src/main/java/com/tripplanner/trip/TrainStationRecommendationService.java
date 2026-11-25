@@ -58,7 +58,11 @@ public class TrainStationRecommendationService {
         if(key==null || key.isBlank()) throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,"STATION_NOT_CONFIGURED","주변 기차역 조회가 준비되지 않았어요. 출발역을 직접 선택해 주세요.");
         try {
             var stations=new LinkedHashMap<String,SelectedPlace>();
-            for(String keyword:List.of("KTX 정차역","고속철도선")) {
+            String regional = regionalStationName(origin.address());
+            List<String> keywords = new ArrayList<>(List.of("KTX 정차역", "고속철도선"));
+            if (regional != null) keywords.add(regional);
+            for(String keyword:keywords) {
+                if (keyword.equals(regional) && stations.values().stream().anyMatch(p -> stationName(p.name()).equals(regional))) continue;
                 var uri=UriComponentsBuilder.fromUriString("https://dapi.kakao.com/v2/local/search/keyword.json")
                     .queryParam("query",keyword).queryParam("x",origin.longitude()).queryParam("y",origin.latitude()).queryParam("sort","distance").queryParam("size",15);
                 var data=http.get().uri(uri.build().encode().toUri()).header("Authorization","KakaoAK "+key).retrieve().body(JsonNode.class);
@@ -66,7 +70,9 @@ public class TrainStationRecommendationService {
                 for(var row:data.path("documents")) {
                     try {
                         String name=row.path("place_name").asText(),category=row.path("category_name").asText();
-                        if(!highSpeedStation(name,category)) continue;
+                        boolean regionalMatch = keyword.equals(regional) && stationName(name).equals(regional)
+                                && category.contains("기차역") && !category.matches(".*(폐역|지하철).*") && !name.contains("출구");
+                        if(!regionalMatch && !highSpeedStation(name,category)) continue;
                         var station=new SelectedPlace(row.path("id").asText(),name,row.path("address_name").asText(),Double.valueOf(row.path("y").asText()),Double.valueOf(row.path("x").asText()),null);
                         check(station);
                         String identity=name.trim().split("\\s+")[0].replaceAll("\\([^)]*\\)","")+"|"+station.address().split("\\s+")[0];
@@ -74,8 +80,27 @@ public class TrainStationRecommendationService {
                     } catch(RuntimeException ignored) { /* Unverified places cannot become high-speed station candidates. */ }
                 }
             }
-            return stations.values().stream().sorted(Comparator.comparingDouble(s->Geo.distanceMeters(origin.latitude(),origin.longitude(),s.latitude(),s.longitude()))).limit(3).toList();
+            var ordered = stations.values().stream().sorted(Comparator.comparingDouble(s -> distance(origin, s))).toList();
+            var result = new ArrayList<>(ordered.stream().limit(3).toList());
+            var representative = ordered.stream().filter(s -> stationName(s.name()).equals(regional)).findFirst();
+            if (representative.isPresent() && !result.contains(representative.get())) {
+                result.set(result.size() - 1, representative.get());
+                result.sort(Comparator.comparingDouble(s -> distance(origin, s)));
+            }
+            return List.copyOf(result);
         } catch(RuntimeException e) { throw new ApiException(HttpStatus.BAD_GATEWAY,"STATION_UNAVAILABLE","고속열차 정차역 후보를 확인하지 못했어요. 잠시 후 다시 조회하거나 출발역을 직접 선택해 주세요."); }
+    }
+    static String regionalStationName(String address) {
+        String[] parts = address.trim().split("\\s+");
+        String first = parts[0];
+        if (Set.of("서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종").contains(first)) return first + "역";
+        String region = Arrays.stream(parts).filter(p -> p.matches(".*(특별시|광역시|특별자치시)$"))
+                .findFirst().orElseGet(() -> Arrays.stream(parts).filter(p -> p.endsWith("시") || p.endsWith("군")).findFirst().orElse(null));
+        if (region == null) return null;
+        return region.replaceFirst("(특별자치시|특별시|광역시|시|군)$", "") + "역";
+    }
+    private static String stationName(String name) {
+        return name.trim().split("\\s+")[0].replaceAll("\\([^)]*\\)", "");
     }
     static boolean highSpeedStation(String name,String category) {
         String classification=category.replaceAll("\\s","").toUpperCase(Locale.ROOT);

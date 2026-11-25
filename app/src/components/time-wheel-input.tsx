@@ -1,20 +1,34 @@
+import { AppModal as Modal } from './app-modal';
 import type { ComponentRef } from 'react';
-import { useRef, useState } from 'react';
-import { Keyboard, Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Keyboard, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { formatWheelTime, TIME_HOURS, TIME_MINUTES, wheelTimeParts } from '@/lib/time-wheel';
 import { C, s } from '@/lib/styles';
 
 const HEIGHT = 44;
+const ALL_MINUTES = Array.from({ length: 60 }, (_, index) => index);
 function Wheel({ values, value, suffix, onChange }: { values: number[]; value: number; suffix: string; onChange: (value: number) => void }) {
   const ref = useRef<ComponentRef<typeof ScrollView>>(null);
   const [initial] = useState(() => Math.max(0, values.indexOf(value)));
+  const positioned = useRef(Platform.OS !== 'web');
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    // RN Web does not apply contentOffset consistently when a modal first mounts.
+    let settledFrame = 0;
+    const layoutFrame = requestAnimationFrame(() => {
+      ref.current?.scrollTo({ y: initial * HEIGHT, animated: false });
+      settledFrame = requestAnimationFrame(() => { positioned.current = true; });
+    });
+    return () => { cancelAnimationFrame(layoutFrame); if (settledFrame) cancelAnimationFrame(settledFrame); };
+  }, [initial]);
   return <View style={{ flex: 1, height: HEIGHT * 5 }}>
     <View pointerEvents="none" style={{ position: 'absolute', top: HEIGHT * 2, left: 4, right: 4, height: HEIGHT, borderRadius: 10, backgroundColor: '#edf2ff' }} />
     <ScrollView ref={ref} nestedScrollEnabled showsVerticalScrollIndicator={false} contentInsetAdjustmentBehavior="never"
       contentOffset={{ x: 0, y: initial * HEIGHT }} contentContainerStyle={{ paddingVertical: HEIGHT * 2 }}
       snapToInterval={HEIGHT} decelerationRate="fast" scrollEventThrottle={16}
       onScroll={(event) => {
+        if (!positioned.current) return;
         const index = Math.max(0, Math.min(values.length - 1, Math.round(event.nativeEvent.contentOffset.y / HEIGHT)));
         if (values[index] !== value) onChange(values[index]);
       }}>
@@ -26,9 +40,9 @@ function Wheel({ values, value, suffix, onChange }: { values: number[]; value: n
     </ScrollView>
   </View>;
 }
-function TimeDialog({ value, label, onSave, onClose }: { value: string; label: string; onSave: (time: string) => void; onClose: () => void }) {
-  const [hour, setHour] = useState(() => wheelTimeParts(value).hour);
-  const [minute, setMinute] = useState(() => wheelTimeParts(value).minute);
+function TimeDialog({ value, label, onSave, onClose, minuteInterval = 10 }: { value: string; label: string; onSave: (time: string) => void; onClose: () => void; minuteInterval?: 1 | 10 }) {
+  const [hour, setHour] = useState(() => wheelTimeParts(value, minuteInterval).hour);
+  const [minute, setMinute] = useState(() => wheelTimeParts(value, minuteInterval).minute);
   return <SafeAreaView style={{ flex: 1, backgroundColor: '#0007', justifyContent: 'center', padding: 20 }}>
     <View style={{ padding: 20, backgroundColor: '#fff', borderRadius: 24 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center' }}><Text style={[s.sectionTitleSmall, { flex: 1 }]}>{label}</Text>
@@ -37,7 +51,7 @@ function TimeDialog({ value, label, onSave, onClose }: { value: string; label: s
       <Text style={s.mutedSmall}>시와 분을 위아래로 스크롤해 선택하세요.</Text>
       <View style={{ flexDirection: 'row', gap: 12, marginVertical: 16 }}>
         <Wheel values={TIME_HOURS} value={hour} suffix="시" onChange={setHour} />
-        <Wheel values={TIME_MINUTES} value={minute} suffix="분" onChange={setMinute} />
+        <Wheel values={minuteInterval === 1 ? ALL_MINUTES : TIME_MINUTES} value={minute} suffix="분" onChange={setMinute} />
       </View>
       <Pressable accessibilityRole="button" style={s.primary} onPress={() => onSave(formatWheelTime(hour, minute))}>
         <Text style={s.primaryText}>{formatWheelTime(hour, minute)} 선택</Text>
@@ -45,14 +59,14 @@ function TimeDialog({ value, label, onSave, onClose }: { value: string; label: s
     </View>
   </SafeAreaView>;
 }
-export function TimeWheelInput({ label, value, onChange, minWidth = 0 }: { label: string; value: string; onChange: (time: string) => void; minWidth?: number }) {
+export function TimeWheelInput({ label, value, onChange, minWidth = 0, initialTime, disabled = false, minuteInterval = 10 }: { label: string; value: string; onChange: (time: string) => void; minWidth?: number; initialTime?: string; disabled?: boolean; minuteInterval?: 1 | 10 }) {
   const [open, setOpen] = useState(false);
   return <View style={{ flex: 1, minWidth, gap: 6 }}><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={s.mutedSmall}>{label}</Text>
-    <Pressable accessibilityRole="button" accessibilityLabel={`${label} ${value}, 시간 선택`} onPress={() => { Keyboard.dismiss(); setOpen(true); }} style={[s.input, { justifyContent: 'center' }]}>
+    <Pressable accessibilityRole="button" disabled={disabled} accessibilityLabel={`${label} ${value}, 시간 선택`} onPress={() => { Keyboard.dismiss(); setOpen(true); }} style={[s.input, disabled && s.disabled, { justifyContent: 'center' }]}>
       <Text numberOfLines={1} style={{ color: '#172033', fontSize: 16 }}>{value || '시간 선택'} ⌄</Text>
     </Pressable>
     <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-      <SafeAreaProvider>{open && <TimeDialog value={value} label={label} onClose={() => setOpen(false)} onSave={(time) => { onChange(time); setOpen(false); }} />}</SafeAreaProvider>
+      <SafeAreaProvider>{open && <TimeDialog value={value || initialTime || ''} label={label} minuteInterval={minuteInterval} onClose={() => setOpen(false)} onSave={(time) => { onChange(time); setOpen(false); }} />}</SafeAreaProvider>
     </Modal>
   </View>;
 }

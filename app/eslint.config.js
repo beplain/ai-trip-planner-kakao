@@ -10,5 +10,6 @@ module.exports = defineConfig([
   {
     files: ['scripts/**/*.cjs'],
     languageOptions: { globals: { __dirname: 'readonly' } },
+    rules: { 'react-hooks/rules-of-hooks': 'off' }, // Node VM harnesses call mocked hooks outside React.
   },
 ]);

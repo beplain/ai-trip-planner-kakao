@@ -53,7 +53,7 @@ class ExtraRequestRulesTests {
         var ai=new TripGenerationRulesTests.FakeAi(null);
         var service=new TripGenerationService(ai,new SampleItineraryGenerator(),new TripGenerationRulesTests.FakePlaces());
         try {
-            assertThrows(ApiException.class,()->service.generate(new GenerateRequest("부산",null,1,null,List.of(),"많이 걷지 않게")));
+            assertEquals("BEST_EFFORT",service.generate(new GenerateRequest("부산",null,1,null,List.of(),"많이 걷지 않게")).source());
             assertEquals(0,ai.calls);
         } finally { service.shutdown(); }
         assertEquals("UNVERIFIABLE",ExtraRequestRules.checks(draft("편하게",visit("1","A","관광","10:00"))).get(0).status());

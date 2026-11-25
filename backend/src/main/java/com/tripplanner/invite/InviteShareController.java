@@ -40,7 +40,7 @@ public class InviteShareController {
                                       @RequestParam(required = false, defaultValue = "") String key,
                                       HttpServletRequest request) throws IOException {
         if (!token.matches("(?:draft_)?[A-Za-z0-9_-]{32}")) throw ApiException.notFound("초대 링크");
-        var invite = token.startsWith("draft_") ? null : invites.findByToken(token).orElseThrow(() -> ApiException.notFound("초대 링크"));
+        var invite = token.startsWith("draft_") ? null : invites.findByToken(token).filter(i->i.getTrip().getDeletedAt()==null).orElseThrow(() -> ApiException.notFound("초대 링크"));
         MemberRole invitationRole = invite == null ? drafts.invitationRole(token) : invite.getRole();
         if (invite != null && invite.isExpired()) {
             return html(HttpStatus.GONE, "<!doctype html><html lang=\"ko\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>초대 만료</title><h1>만료된 초대입니다.</h1><p>여행을 만든 사람에게 새 초대 링크를 요청해 주세요.</p></html>");
